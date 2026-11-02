@@ -1,0 +1,4 @@
+# expect: 2000 non-ASCII character U+00E9
+argv = ["cargo"]
+timeout_secs = 1
+cwd = "x\u00E9"

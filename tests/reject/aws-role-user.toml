@@ -1,0 +1,7 @@
+# expect: 2000 aws_role
+schema = 1
+id = "m"
+kind = "connector"
+
+[identity]
+aws_role = "arn:aws:iam::123456789012:user/x"

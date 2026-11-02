@@ -1,0 +1,7 @@
+# expect: 2000 class
+schema = 1
+id = "m"
+kind = "connector"
+
+[autonomy]
+admin = 1

@@ -1,0 +1,8 @@
+# expect: 2000 control or format character U+000A
+schema = 1
+id = "m"
+kind = "connector"
+
+[commands.c]
+argv = ["echo", "a\nb"]
+timeout_secs = 1

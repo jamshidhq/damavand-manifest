@@ -1,0 +1,4 @@
+# expect: 2000 unknown variant
+schema = 1
+id = "m"
+kind = "plugin"

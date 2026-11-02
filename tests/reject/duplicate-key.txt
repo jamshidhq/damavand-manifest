@@ -1,0 +1,5 @@
+# expect: 2000 duplicate key
+schema = 1
+id = "m"
+id = "n"
+kind = "connector"

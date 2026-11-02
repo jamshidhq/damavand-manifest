@@ -1,0 +1,4 @@
+# expect: 2000 is a denied environment variable
+argv = ["cargo", "test"]
+timeout_secs = 1
+env = { LD_PRELOAD = "/tmp/x.so" }

@@ -1,0 +1,9 @@
+# expect: 2000 metadata
+schema = 1
+id = "m"
+kind = "connector"
+audit = "metadata"
+
+[commands.c]
+argv = ["x"]
+timeout_secs = 1

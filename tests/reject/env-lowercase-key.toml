@@ -1,0 +1,9 @@
+# expect: 2000 env
+schema = 1
+id = "m"
+kind = "connector"
+
+[commands.c]
+argv = ["x"]
+timeout_secs = 1
+env = { path = "/bin" }

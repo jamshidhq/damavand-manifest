@@ -1,0 +1,4 @@
+# expect: 2000 is a wrapper or interpreter program
+# base-argv: ["xargs", "echo"]
+argv = ["xargs", "echo"]
+timeout_secs = 1

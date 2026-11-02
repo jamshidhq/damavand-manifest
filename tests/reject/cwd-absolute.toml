@@ -1,0 +1,9 @@
+# expect: 2000 cwd
+schema = 1
+id = "m"
+kind = "connector"
+
+[commands.c]
+argv = ["x"]
+cwd = "/tmp"
+timeout_secs = 1

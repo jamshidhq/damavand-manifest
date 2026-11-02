@@ -1,0 +1,4 @@
+# expect: 2000 is a wrapper or interpreter program
+# base-argv: ["awk", "-f", "x.awk"]
+argv = ["awk", "-f", "y.awk"]
+timeout_secs = 1

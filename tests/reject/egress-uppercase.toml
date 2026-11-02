@@ -1,0 +1,7 @@
+# expect: 2000 host
+schema = 1
+id = "m"
+kind = "connector"
+
+[[egress]]
+host = "API.example.com"

@@ -1,0 +1,10 @@
+# expect: 2000 more than once
+schema = 1
+id = "m"
+kind = "connector"
+
+[commands.c]
+argv = ["x", "--", "{p}", "{p}"]
+timeout_secs = 1
+[commands.c.args.p]
+type = "string"

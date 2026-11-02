@@ -1,0 +1,7 @@
+# expect: 2000 timeout_secs
+schema = 1
+id = "m"
+kind = "connector"
+
+[commands.c]
+argv = ["x"]

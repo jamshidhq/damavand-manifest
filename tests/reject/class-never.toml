@@ -1,0 +1,9 @@
+# expect: 2000 never
+schema = 1
+id = "m"
+kind = "connector"
+
+[[tools]]
+id = "t"
+upstream = "t"
+class = "never"

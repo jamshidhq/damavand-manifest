@@ -1,0 +1,4 @@
+# expect: 2000 id
+schema = 1
+id = ""
+kind = "connector"

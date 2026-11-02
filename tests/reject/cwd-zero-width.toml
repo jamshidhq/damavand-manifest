@@ -1,0 +1,9 @@
+# expect: 2000 control or format character U+200B
+schema = 1
+id = "m"
+kind = "connector"
+
+[commands.c]
+argv = ["x"]
+timeout_secs = 1
+cwd = "a\u200Bb"

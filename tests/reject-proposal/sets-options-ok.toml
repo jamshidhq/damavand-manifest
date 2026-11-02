@@ -1,0 +1,5 @@
+# expect: 2000 a proposal cannot set
+argv = ["cargo", "{s}"]
+options_ok = true
+timeout_secs = 1
+args.s = { type = "string" }

@@ -1,0 +1,8 @@
+# expect: 2000 non-ASCII character U+00E9
+schema = 1
+id = "m"
+kind = "connector"
+
+[commands.c]
+argv = ["echo", "x\u00E9"]
+timeout_secs = 1

@@ -1,0 +1,10 @@
+# expect: 2000 metadata
+schema = 1
+id = "m"
+kind = "connector"
+audit = "metadata"
+
+[[tools]]
+id = "t"
+upstream = "t"
+class = "write.remote"
