@@ -125,7 +125,8 @@ pub const REMOTE_PROGRAMS: &[&str] = &[
 /// warning ([`crate::Manifest::lints`]) and make the Never and class checks
 /// look at every later word. An agent proposal is bounded otherwise: its
 /// `argv[0]` must already be the program of a user-authored command (see
-/// [`crate::CommandProposal::parse`]). An entry ending in `*` matches by
+/// [`crate::CommandProposal::parse`]) and never one of these or of
+/// [`INTERPRETER_PROGRAMS`]. An entry ending in `*` matches by
 /// prefix.
 pub const WRAPPER_PROGRAMS: &[&str] = &[
     "sh", "bash", "zsh", "dash", "ksh", "mksh", "fish", "csh", "tcsh", "env", "xargs", "find",
@@ -157,7 +158,15 @@ pub const CODE_FLAGS: &[&str] = &[
     "-ok",
     "-okdir",
     "-x",
+    "-p",
+    "-r",
+    "--print",
+    "eval",
 ];
+
+/// Letters that make a single-dash option cluster (`-xc`, `-ec`, `-Ec`)
+/// a code flag: one of them may be the flag that takes code.
+pub const CODE_FLAG_LETTERS: &[char] = &['c', 'e', 'E', 'x', 'r', 'p'];
 
 /// Characters an agent proposal may not put in an argv literal: quotes,
 /// backslash and the shell metacharacters for expansion, globbing,
@@ -170,10 +179,22 @@ pub const PROPOSAL_FORBIDDEN_CHARS: &[char] = &[
 ];
 
 /// True when the argv literal is a [`CODE_FLAGS`] entry, alone or as
-/// `flag=value`.
+/// `flag=value`, or a single-dash cluster of letters holding one of
+/// [`CODE_FLAG_LETTERS`] (`-xc`). This over-refuses (`-Dwarnings` holds an
+/// `r`): it is defence in depth behind the rule that a proposal never runs
+/// a wrapper or interpreter.
 pub fn is_code_flag(literal: &str) -> bool {
     let flag = literal.split_once('=').map_or(literal, |(f, _)| f);
-    CODE_FLAGS.contains(&flag)
+    if CODE_FLAGS.contains(&flag) {
+        return true;
+    }
+    match flag.strip_prefix('-') {
+        // `--long` is not a cluster: its second `-` is not a letter.
+        Some(cluster) => {
+            cluster.chars().all(|c| c.is_ascii_alphabetic()) && cluster.contains(CODE_FLAG_LETTERS)
+        }
+        _ => false,
+    }
 }
 
 /// Environment variable names no command may set: they change which code

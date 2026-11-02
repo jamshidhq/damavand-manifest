@@ -301,3 +301,18 @@ interpreter. Proposals are therefore bounded fail-closed:
   `INTERPRETER_PROGRAMS` (the shells, busybox, `python*`, node, perl, ruby,
   deno, bun, lua, php, awk, gawk, mawk, nawk) is at least `write.remote`,
   like `REMOTE_PROGRAMS`, in user-authored manifests and proposals alike.
+
+### Review round 3 (PR #1)
+
+- **No wrapper or interpreter in a proposal.** Approval of a program is
+  not enough when the program runs code it is given: a proposal's
+  `argv[0]` must be the `argv[0]` of a base command AND not in
+  `WRAPPER_PROGRAMS` or `INTERPRETER_PROGRAMS`. Both must hold.
+- **Code flags, defence in depth.** `CODE_FLAGS` also holds `-p`, `-r`,
+  `--print` and the word `eval`, and any single-dash cluster of letters
+  holding one of `CODE_FLAG_LETTERS` (`c e E x r p`, so `-xc`, `-ec`,
+  `-Ec`) counts as a code flag. This over-refuses (`-Dwarnings`, `-rf`):
+  a proposal then cannot put a placeholder after such a literal, and the
+  user writes that command instead.
+- **`env` values.** When `argv[0]` is `env`, `resolve` refuses an argument
+  value holding `=`: through `env` it would set a variable.

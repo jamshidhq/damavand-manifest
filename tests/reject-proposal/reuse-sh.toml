@@ -1,0 +1,4 @@
+# expect: 2000 is a wrapper or interpreter program
+# base-argv: ["sh", "scripts/check.sh"]
+argv = ["sh", "scripts/other.sh"]
+timeout_secs = 1

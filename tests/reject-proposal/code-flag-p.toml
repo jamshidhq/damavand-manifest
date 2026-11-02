@@ -1,0 +1,4 @@
+# expect: 2000 follows the code-taking flag
+argv = ["cargo", "-p", "--", "{s}"]
+timeout_secs = 1
+args.s = { type = "string" }

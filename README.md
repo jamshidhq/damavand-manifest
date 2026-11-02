@@ -104,7 +104,8 @@ anything outside printable ASCII escaped as `\u{XXXX}`), and after the user
 approves, the core calls `apply` (refused if the base moved on) and commits
 the result as a user-authored revision with a new digest. A proposal is held to more than
 a manifest, fail closed: its `argv[0]` must be the `argv[0]` of a command
-already in the base manifest; no placeholder follows a `CODE_FLAGS` literal
+already in the base manifest and never a wrapper or interpreter
+(`WRAPPER_PROGRAMS`, `INTERPRETER_PROGRAMS`); no placeholder follows a `CODE_FLAGS` literal
 (`-c`, `-e`, `--eval`, ...); literals hold no quote or shell metacharacter;
 it cannot set `allow_option`, `allow_path_escape` or `options_ok`; and it
 sets no `env`.

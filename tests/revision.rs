@@ -266,7 +266,19 @@ fn proposal_rejection_corpus() {
             .expect("expect header");
         let (code, want) = spec.split_once(' ').unwrap_or((spec, ""));
         let code: i64 = code.parse().unwrap();
-        match CommandProposal::parse(&base, "x", &text) {
+        // `# base-argv: [...]` on line 2 proposes against a base whose
+        // only command runs that argv (a user-approved program).
+        let custom = text
+            .lines()
+            .nth(1)
+            .and_then(|l| l.strip_prefix("# base-argv: "))
+            .map(|argv| {
+                parse(&with(&format!(
+                    "\n[commands.b]\nargv = {argv}\ntimeout_secs = 1\n"
+                )))
+            });
+        let base = custom.as_ref().unwrap_or(&base);
+        match CommandProposal::parse(base, "x", &text) {
             Ok(_) => failures.push(format!("{}: accepted", path.display())),
             Err(e) if e.code() != code || !e.to_string().contains(want) => failures.push(format!(
                 "{}: want {code} {want:?}, got {} {e}",
@@ -467,33 +479,52 @@ fn proposal_program_must_already_be_approved() {
         "\n[commands.k]\nargv = [\"kubectl\", \"version\"]\ntimeout_secs = 1\n",
     ));
     CommandProposal::parse(&with_kubectl, "k2", kubectl).unwrap();
-    // A user-approved shell can be proposed again, but not with code from
-    // an argument.
+    // A user-approved shell or wrapper is still not open to agents: both
+    // conditions must hold (fail closed).
     let with_sh = parse(&with(
         "\n[commands.s]\nargv = [\"sh\", \"scripts/check.sh\"]\ntimeout_secs = 1\n",
     ));
-    CommandProposal::parse(
+    let e = CommandProposal::parse(
         &with_sh,
         "s2",
         "argv = [\"sh\", \"scripts/lint.sh\"]\ntimeout_secs = 1\n",
     )
-    .unwrap();
-    let e = CommandProposal::parse(
-        &with_sh,
-        "s3",
-        "argv = [\"sh\", \"-c\", \"--\", \"{code}\"]\ntimeout_secs = 1\nargs.code = { type = \"string\" }\n",
-    )
     .unwrap_err();
     assert!(
         e.to_string()
-            .contains("follows the code-taking flag \"-c\""),
+            .contains("\"sh\" is a wrapper or interpreter program"),
         "{e}"
     );
-    // A placeholder before the flag is not code.
+    // An approved plain program cannot take code from an argument.
+    let with_make = parse(&with(
+        "\n[commands.m]\nargv = [\"make\", \"check\"]\ntimeout_secs = 1\n",
+    ));
+    for flag in ["-c", "-xc", "-p", "--print", "--eval=x", "eval"] {
+        let e = CommandProposal::parse(
+            &with_make,
+            "m2",
+            &format!("argv = [\"make\", \"{flag}\", \"--\", \"{{code}}\"]\ntimeout_secs = 1\nargs.code = {{ type = \"string\" }}\n"),
+        )
+        .unwrap_err();
+        assert!(
+            e.to_string()
+                .contains(&format!("follows the code-taking flag {flag:?}")),
+            "{flag}: {e}"
+        );
+    }
+    // A placeholder before the flag is not code; plain options are fine.
     CommandProposal::parse(
-        &with_sh,
-        "s4",
-        "argv = [\"sh\", \"--\", \"{f}\", \"-c\"]\ntimeout_secs = 1\nargs.f = { type = \"string\", constraint = { enum = [\"a\"] } }\n",
+        &with_make,
+        "m3",
+        "argv = [\"make\", \"--\", \"{f}\", \"-c\"]\ntimeout_secs = 1\nargs.f = { type = \"string\", constraint = { enum = [\"a\"] } }\n",
     )
     .unwrap();
+    for flag in ["-j", "-kB", "--keep-going", "-n4"] {
+        CommandProposal::parse(
+            &with_make,
+            "m4",
+            &format!("argv = [\"make\", \"{flag}\", \"--\", \"{{t}}\"]\ntimeout_secs = 1\nargs.t = {{ type = \"string\" }}\n"),
+        )
+        .unwrap_or_else(|e| panic!("{flag}: {e}"));
+    }
 }

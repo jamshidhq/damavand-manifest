@@ -17,8 +17,9 @@ use crate::manifest::{
 };
 use crate::pattern::{compile_pattern, is_forbidden_char};
 use crate::schema::{
-    ActionClass, MCP_CALL, NEVER_PROGRAMS, PROPOSAL_ENV_ALLOW, PROPOSAL_FORBIDDEN_CHARS,
-    RUN_COMMAND, is_code_flag, is_denied_env, is_never, is_schema_verb, program_matches,
+    ActionClass, INTERPRETER_PROGRAMS, MCP_CALL, NEVER_PROGRAMS, PROPOSAL_ENV_ALLOW,
+    PROPOSAL_FORBIDDEN_CHARS, RUN_COMMAND, WRAPPER_PROGRAMS, is_code_flag, is_denied_env, is_never,
+    is_schema_verb, program_matches,
 };
 
 type Result<T> = std::result::Result<T, ManifestError>;
@@ -794,7 +795,8 @@ fn param(path: &str, p: RawParam, command_arg: bool) -> Result<Param> {
     Ok(out)
 }
 
-/// What an agent proposal may not do beyond the manifest rules: put a
+/// What an agent proposal may not do beyond the manifest rules: run a
+/// wrapper or interpreter (even one a user command runs), put a
 /// quote or shell metacharacter in a literal, place an argument after a
 /// code-taking flag, or widen authority with `allow_option`,
 /// `allow_path_escape` or `options_ok` (ADR-1122: only the user grants
@@ -805,6 +807,13 @@ fn agent_rules(
     args: &BTreeMap<String, Param>,
     options_ok: Option<bool>,
 ) -> Result<()> {
+    if let Some(ArgvElement::Literal(prog)) = argv.first()
+        && (program_matches(WRAPPER_PROGRAMS, prog) || program_matches(INTERPRETER_PROGRAMS, prog))
+    {
+        return invalid(format!(
+            "{path}.argv[0]: {prog:?} is a wrapper or interpreter program; a proposal cannot run one, even one the user runs"
+        ));
+    }
     let mut code_flag: Option<&str> = None;
     for (i, el) in argv.iter().enumerate() {
         match el {

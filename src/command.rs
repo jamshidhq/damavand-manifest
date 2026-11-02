@@ -174,8 +174,16 @@ impl Command {
                 "argument {name:?} is required"
             )));
         }
+        // `env NAME=value prog`: through `env` a value with `=` sets a
+        // variable, which `DENIED_ENV` exists to stop.
+        let via_env = matches!(self.argv.first(), Some(ArgvElement::Literal(p)) if program_matches(&["env"], p));
         let mut uncleared = Vec::new();
         for (name, value) in &args.0 {
+            if via_env && value.contains('=') {
+                return Err(ManifestError::args(format!(
+                    "argument {name:?}: value holds '=' and the program is env, so it would set a variable"
+                )));
+            }
             if !check_value(name, &self.args[name], value)? {
                 uncleared.push(name.clone());
             }

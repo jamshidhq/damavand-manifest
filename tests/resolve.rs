@@ -458,3 +458,29 @@ fn shells_and_interpreters_are_at_least_write_remote() {
         );
     }
 }
+
+#[test]
+fn env_values_cannot_set_variables() {
+    // `env A=1 prog`: a value with `=` would set a variable, not name a
+    // program or argument.
+    let m = parse(&with(
+        "\n[commands.c]\nargv = [\"/usr/bin/env\", \"--\", \"{p}\", \"{q}\"]\ntimeout_secs = 1\nargs.p = { type = \"string\" }\nargs.q = { type = \"string\" }\n",
+    ));
+    let c = m.command("c").unwrap();
+    for v in ["LD_PRELOAD=x.so", "A=", "=x"] {
+        let e = args_err(c.resolve(&Args::new().with("p", "cargo").with("q", v)));
+        assert!(e.contains("\"q\"") && e.contains('='), "{v}: {e}");
+    }
+    assert!(
+        c.resolve(&Args::new().with("p", "cargo").with("q", "test"))
+            .is_ok()
+    );
+    // Other programs take `=` in values as before.
+    let m = free_arg();
+    assert!(
+        m.command("c")
+            .unwrap()
+            .resolve(&Args::new().with("p", "a=b"))
+            .is_ok()
+    );
+}
