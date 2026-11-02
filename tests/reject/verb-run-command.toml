@@ -1,0 +1,7 @@
+# expect: 2000 run_command
+schema = 1
+id = "m"
+kind = "project"
+
+[verbs.run_command.x]
+constraint = { enum = ["a"] }

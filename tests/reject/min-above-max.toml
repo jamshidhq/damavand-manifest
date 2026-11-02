@@ -1,0 +1,13 @@
+# expect: 2000 min
+schema = 1
+id = "m"
+kind = "connector"
+
+[[tools]]
+id = "t"
+upstream = "t"
+class = "read"
+[tools.params.p]
+type = "integer"
+min = 3
+max = 2

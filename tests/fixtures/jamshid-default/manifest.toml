@@ -1,0 +1,16 @@
+# constraints.toml (next to this file, copied from the damavand-policy
+# jamshid-default bundle) written as a manifest. tests/no_weakening.rs
+# requires the same constraints and the same taint result on every
+# parameter in cases.yaml.
+schema = 1
+id = "jamshid"
+kind = "project"
+
+[verbs.j_edit.mode]
+constraint = { enum = ["append", "replace"] }
+
+[verbs.j_edit.path]
+constraint = { pattern = "[a-z0-9/._-]+" }
+
+[verbs.j_edit.kind]
+constraint = { pattern = "a|b" }

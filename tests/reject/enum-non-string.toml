@@ -1,0 +1,12 @@
+# expect: 2000 invalid type
+schema = 1
+id = "m"
+kind = "connector"
+
+[[tools]]
+id = "t"
+upstream = "t"
+class = "read"
+[tools.params.p]
+type = "string"
+constraint = { enum = [1] }

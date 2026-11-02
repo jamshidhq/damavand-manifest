@@ -1,0 +1,12 @@
+# expect: 2000 tools[0].params.p.max: float values
+schema = 1
+id = "m"
+kind = "connector"
+
+[[tools]]
+id = "t"
+upstream = "t"
+class = "read"
+[tools.params.p]
+type = "integer"
+max = 1.5

@@ -1,0 +1,10 @@
+# expect: 2000 unused
+schema = 1
+id = "m"
+kind = "connector"
+
+[commands.c]
+argv = ["x"]
+timeout_secs = 1
+[commands.c.args.p]
+type = "string"

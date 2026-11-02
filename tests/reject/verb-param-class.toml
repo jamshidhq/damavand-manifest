@@ -1,0 +1,8 @@
+# expect: 2000 unknown field
+schema = 1
+id = "m"
+kind = "project"
+
+[verbs.j_edit.path]
+class = "read"
+constraint = { enum = ["a"] }

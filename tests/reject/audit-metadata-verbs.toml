@@ -1,0 +1,8 @@
+# expect: 2000 metadata
+schema = 1
+id = "m"
+kind = "project"
+audit = "metadata"
+
+[verbs.j_read.path]
+constraint = { enum = ["a"] }

@@ -1,0 +1,9 @@
+# expect: 2000 schema verb
+schema = 1
+id = "m"
+kind = "connector"
+
+[[tools]]
+id = "mcp_call"
+upstream = "x"
+class = "read"

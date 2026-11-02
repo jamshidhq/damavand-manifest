@@ -1,0 +1,12 @@
+# expect: 2000 max_len
+schema = 1
+id = "m"
+kind = "connector"
+
+[[tools]]
+id = "t"
+upstream = "t"
+class = "read"
+[tools.params.p]
+type = "string"
+max_len = 0

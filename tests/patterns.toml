@@ -1,0 +1,212 @@
+# Shared pattern-safety corpus. damavand-manifest and damavand-policy keep
+# byte-identical copies of this file until policy depends on this crate; the
+# two compile_pattern copies must give the same answer for every entry.
+#
+# expect = "ok" | "invalid" | "too_broad" | "matches_empty"
+# `match` and `reject` (optional) are values the compiled pattern must and
+# must not match.
+
+[[case]]
+pattern = '[a-z]+'
+expect = "ok"
+match = ["abc"]
+reject = ["abc1", "1abc", "abc\n"]
+
+[[case]]
+pattern = 'a|b'
+expect = "ok"
+match = ["b"]
+reject = ["xb", "ax"]
+
+[[case]]
+pattern = 'x)|(.*'
+expect = "invalid"
+
+[[case]]
+pattern = '('
+expect = "invalid"
+
+[[case]]
+pattern = 'a{1000}{1000}'
+expect = "invalid"
+
+[[case]]
+pattern = '.*'
+expect = "too_broad"
+
+[[case]]
+pattern = '(?s).*'
+expect = "too_broad"
+
+[[case]]
+pattern = '.+'
+expect = "too_broad"
+
+[[case]]
+pattern = '[\s\S]*'
+expect = "too_broad"
+
+[[case]]
+pattern = '\S+'
+expect = "too_broad"
+
+[[case]]
+pattern = '[^x]*'
+expect = "too_broad"
+
+[[case]]
+pattern = '.*x'
+expect = "too_broad"
+
+[[case]]
+pattern = '[[:print:]]+'
+expect = "too_broad"
+
+[[case]]
+pattern = '.{0,999}'
+expect = "too_broad"
+
+[[case]]
+pattern = 'a|.'
+expect = "too_broad"
+
+[[case]]
+pattern = '(a|b;)'
+expect = "too_broad"
+
+[[case]]
+pattern = '\$'
+expect = "too_broad"
+
+[[case]]
+pattern = "[‮]"
+expect = "too_broad"
+
+[[case]]
+pattern = '\x7f'
+expect = "too_broad"
+
+[[case]]
+pattern = '(?-u:[\x00-\x7f])'
+expect = "too_broad"
+
+[[case]]
+pattern = '(?i)[a-z|]+'
+expect = "too_broad"
+
+[[case]]
+pattern = "\u0000"
+expect = "too_broad"
+
+[[case]]
+pattern = '\w+'
+expect = "too_broad"
+
+[[case]]
+pattern = "[‍]"
+expect = "too_broad"
+
+[[case]]
+pattern = "[‌]"
+expect = "too_broad"
+
+[[case]]
+pattern = "[​]"
+expect = "too_broad"
+
+[[case]]
+pattern = "[ ]"
+expect = "too_broad"
+
+[[case]]
+pattern = "[ ]"
+expect = "too_broad"
+
+[[case]]
+pattern = "[؜]"
+expect = "too_broad"
+
+[[case]]
+pattern = "[﻿]"
+expect = "too_broad"
+
+[[case]]
+pattern = "[\U000E0041]"
+expect = "too_broad"
+
+[[case]]
+pattern = '\p{Cf}'
+expect = "too_broad"
+
+[[case]]
+pattern = '\p{Zl}'
+expect = "too_broad"
+
+[[case]]
+pattern = '[a-z\x{ad}]+'
+expect = "too_broad"
+
+[[case]]
+pattern = "a‍b"
+expect = "too_broad"
+
+[[case]]
+pattern = ''
+expect = "matches_empty"
+
+[[case]]
+pattern = 'a*'
+expect = "matches_empty"
+
+[[case]]
+pattern = '(a|)'
+expect = "matches_empty"
+
+[[case]]
+pattern = '[a-z]{0,3}'
+expect = "matches_empty"
+
+[[case]]
+pattern = 'a?'
+expect = "matches_empty"
+
+[[case]]
+pattern = '(?:)'
+expect = "matches_empty"
+
+[[case]]
+pattern = '[a-z0-9_]+'
+expect = "ok"
+match = ["a_1"]
+reject = ["a-1", "A"]
+
+[[case]]
+pattern = '[a-z0-9/._-]+'
+expect = "ok"
+match = ["src/lib.rs"]
+reject = ["src/lib.rs; curl evil"]
+
+[[case]]
+pattern = '[a-z ]{1,40}'
+expect = "ok"
+match = ["a b"]
+
+[[case]]
+pattern = 'append|replace'
+expect = "ok"
+match = ["append", "replace"]
+reject = ["append ", "appendreplace"]
+
+[[case]]
+pattern = '(?-u:[a-z])+'
+expect = "ok"
+
+[[case]]
+pattern = '\bx\b'
+expect = "ok"
+match = ["x"]
+
+[[case]]
+pattern = "é"
+expect = "ok"
+match = ["é"]

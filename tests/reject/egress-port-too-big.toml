@@ -1,0 +1,8 @@
+# expect: 2000 port
+schema = 1
+id = "m"
+kind = "connector"
+
+[[egress]]
+host = "example.com"
+port = 65536

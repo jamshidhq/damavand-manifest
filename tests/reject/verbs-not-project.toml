@@ -1,0 +1,7 @@
+# expect: 2000 project
+schema = 1
+id = "m"
+kind = "connector"
+
+[verbs.j_edit.mode]
+constraint = { enum = ["a"] }

@@ -1,0 +1,7 @@
+# expect: 2000 0-3
+schema = 1
+id = "m"
+kind = "connector"
+
+[autonomy]
+read = 4

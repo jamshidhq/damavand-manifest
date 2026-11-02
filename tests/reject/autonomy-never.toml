@@ -1,0 +1,7 @@
+# expect: 2000 never
+schema = 1
+id = "m"
+kind = "connector"
+
+[autonomy]
+never = 0

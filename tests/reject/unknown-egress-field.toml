@@ -1,0 +1,8 @@
+# expect: 2000 unknown field
+schema = 1
+id = "m"
+kind = "connector"
+
+[[egress]]
+host = "api.example.com"
+scheme = "http"

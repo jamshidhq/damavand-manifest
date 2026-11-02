@@ -1,0 +1,4 @@
+# expect: 2005
+schema = 2
+id = "m"
+kind = "connector"

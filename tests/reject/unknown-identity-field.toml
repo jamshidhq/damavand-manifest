@@ -1,0 +1,6 @@
+# expect: 2000 unknown field
+schema = 1
+id = "m"
+kind = "connector"
+[identity]
+gcp_sa = "x"

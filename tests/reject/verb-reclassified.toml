@@ -1,0 +1,7 @@
+# expect: 2000 invalid type
+schema = 1
+id = "m"
+kind = "project"
+
+[verbs.j_edit]
+class = "read"
