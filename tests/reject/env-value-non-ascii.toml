@@ -1,0 +1,9 @@
+# expect: 2000 non-ASCII character U+00FC
+schema = 1
+id = "m"
+kind = "connector"
+
+[commands.c]
+argv = ["x"]
+timeout_secs = 1
+env = { A = "\u00FC" }

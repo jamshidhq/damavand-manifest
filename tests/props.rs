@@ -14,7 +14,7 @@ timeout_secs = 10
 args.p = { type = "string", max_len = 64, constraint = { pattern = "[a-z0-9_]+" } }
 args.e = { type = "string", constraint = { enum = ["safe", "also-safe"] } }
 args.f = { type = "string", max_len = 64 }
-args.d = { type = "string", max_len = 64, allow_dash = true }
+args.d = { type = "string", max_len = 64, allow_option = true }
 "#;
 
 /// Values an attacker would try: shell and quoting metacharacters, dashes,
@@ -23,6 +23,11 @@ fn hostile() -> impl Strategy<Value = String> {
     let atoms = prop_oneof![
         Just("-".to_string()),
         Just("--".to_string()),
+        Just("@".to_string()),
+        Just("+".to_string()),
+        Just("/".to_string()),
+        Just("..".to_string()),
+        Just("=".to_string()),
         Just(";".to_string()),
         Just("$(id)".to_string()),
         Just("`id`".to_string()),
@@ -67,9 +72,15 @@ proptest! {
         for (n, v) in &given {
             args = args.with(*n, v.as_str());
         }
+        // No argument has allow_path_escape.
+        let escapes = |v: &str| {
+            v.split('=')
+                .any(|p| p.trim_start_matches(['-', '@', '+']).starts_with('/') || p.split(['/', '\\']).any(|s| s == ".."))
+        };
         let should_refuse = given.iter().any(|(n, v)| {
             v.contains('\0')
-                || (*n != "d" && v.starts_with('-'))
+                || (*n != "d" && v.starts_with(['-', '@', '+']))
+                || escapes(v)
                 || (*n != "e" && v.len() > 64)
         });
         match cmd.resolve(&args) {
@@ -84,8 +95,8 @@ proptest! {
                 prop_assert_eq!(r.argv.len(), 3 + given.len());
                 for (el, (name, v)) in r.argv[3..].iter().zip(&given) {
                     prop_assert_eq!(el, *v);
-                    // Only allow_dash args may start with '-'.
-                    if el.starts_with('-') {
+                    // Only allow_option args may look like an option.
+                    if el.starts_with(['-', '@', '+']) {
                         prop_assert_eq!(*name, "d");
                     }
                     let cleared = !r.uncleared.iter().any(|u| u == name);

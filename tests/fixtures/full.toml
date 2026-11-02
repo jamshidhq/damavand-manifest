@@ -100,7 +100,7 @@ options_ok = true
 type = "integer"
 min = -10
 max = 10
-allow_dash = true
+allow_option = true
 
 [commands.bench.args.name]
 type = "string"

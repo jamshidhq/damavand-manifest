@@ -27,12 +27,12 @@ in section 8.
 | `audit` | enum | `full` (default) or `metadata`. No `off`. |
 | `autonomy` | table | Class → 0-3. No `never` key. |
 | `egress` | list | `{host, port=443}`. Lowercase A-label hosts, exact match, HTTPS only, no wildcards. |
-| `secrets` | list | `{name, host, header, scheme}`. Names only. `host` must be in `egress`. |
+| `secrets` | list | `{name, host, port=443, header, scheme}`. Names only. (`host`, `port`) must be in `egress`. |
 | `tools` | list | MCP tools (below). |
 | `verbs` | table | Param constraints for built-in Cedar verbs. `project` kind only. |
 | `commands` | table | Named commands (section 5). |
 
-**Tool:** `id` (grammar), `upstream` (the real MCP name, any printable ASCII, max 128 bytes), `class` (ActionClass), `params`.
+**Tool:** `id` (grammar), `upstream` (the real MCP name, any printable ASCII, max 128 bytes), `class` (ActionClass; omitted means `write.remote`), `params`.
 
 **Param:** `type` (`string`, `integer`, `boolean`), `required`, shape limits (`max_len`, `min`, `max`), and an optional `constraint` (`enum` or `pattern`). Shape rejects bad values before policy. Only `constraint` clears taint, so free text stays tainted. The crate generates MCP JSON Schema (`additionalProperties: false`); authors never write it.
 
@@ -79,7 +79,7 @@ constraint = { pattern = "[a-z0-9_:]+" }
 
 - `argv` only. No shell, no splitting. `argv[0]` is a literal. The class is the schema class of `run_command`.
 - Placeholders fill a whole element only. An absent optional arg deletes its element.
-- Values starting with `-` are refused unless `allow_dash = true`. `--` must precede the first placeholder unless `options_ok = true`.
+- Values starting with `-` are refused unless `allow_option = true` (renamed from `allow_dash`, see section 9). `--` must precede the first placeholder unless `options_ok = true`.
 - Args are tainted. Policy checks them as (`run_command`, arg); uncleared args escalate to the user.
 - `env`: fixed values only; inherited env cleared; never secrets.
 - `cwd`: relative, inside the worktree, no `..`.
@@ -123,7 +123,7 @@ Follow-up: register codes in proto `error-codes.md` and its consts test.
 
 - Round trip: parse, canonicalise, parse: same digest, also for reformatted TOML.
 - Rejection corpus: unknown fields, duplicate keys, bad ids, `never` class, reclassified verb, `NEVER_ACTIONS` collision, secret host outside egress, substring placeholder, missing `--`, `..` in cwd, each limit plus one, the pattern corpus.
-- Proptest: `resolve` never emits a `-` value without `allow_dash`; every element is a literal or a constraint-checked value; digest ignores key order; parse never panics.
+- Proptest: `resolve` never emits a `-`, `@` or `+` value without `allow_option`; every element is a literal or a constraint-checked value; digest ignores key order; parse never panics.
 - Mutants: canonicaliser, digest, resolver, dash and `--` rules, limits, class rules.
 - Order: manifest v0.1 is standalone (as policy v0.1 was), wire names and codes local, no git deps. After publish: proto, then manifest, then policy.
 
@@ -163,7 +163,8 @@ Where the code is stricter than, or fills a gap in, sections 0-7:
   allowed.
 - **Uncleared arguments.** `Command::resolve` refuses (2003) unknown or
   missing required arguments, wrong types, values out of shape, NUL and
-  dash values without `allow_dash`. A value its constraint does not clear is
+  option-like values without `allow_option`, path escapes without
+  `allow_path_escape`. A value its constraint does not clear is
   kept and listed in `ResolvedArgv::uncleared`, for policy to escalate.
   Integer and boolean arguments carry no constraint, so they are always
   uncleared.
@@ -191,3 +192,84 @@ Where the code is stricter than, or fills a gap in, sections 0-7:
   decision comparison runs in policy once it depends on this crate.
 - **Shared pattern corpus.** `tests/patterns.toml` is new; policy adopts
   the same bytes when it switches.
+
+### Review round 1 (PR #1)
+
+Rules added after the adversarial review of PR #1. Each refusal has
+corpus entries in `tests/reject/` (manifests) or `tests/reject-proposal/`
+(agent proposals).
+
+- **Never programs.** `NEVER_PROGRAMS` (one const in `schema.rs`:
+  terraform, tofu, terragrunt, tfp, pulumi, cdk, cdktf, sam) holds the
+  infrastructure apply tools that are Never by owner rule. A command whose
+  `argv[0]` basename names one is refused at load, in `cross_check` (every
+  revision) and so in `CommandProposal::parse`. The match is on the
+  lowercased basename, also with a variant suffix (`-1.9`, `_v2`, `.exe`)
+  or a bare version of digits and dots (`3`, `1.5`). When `argv[0]` is a wrapper program, every word
+  of every later literal is checked too, so `env A=1 tofu apply` and
+  `sh -c "cd d && tofu apply"` are refused, and `resolve` refuses argument
+  values that make a wrapper run one. **Limit:** the crate sees argv only.
+  It cannot see through a script or build tool (`make apply`,
+  `./deploy.sh`, `npx cdk`, `docker run <image>`); those are reviewed with
+  the manifest, and the sandbox bounds them. `cdktf` is added to the owner
+  list (the CDK for terraform); `cdk8s` is not matched.
+- **Remote programs: class floor, not Never.** kubectl, helm, argocd,
+  flux and ansible-playbook stay allowed (the DevOps agent runs read
+  operations with them), as do aws, gcloud and az. A command whose program
+  (`argv[0]`, or a literal word behind a wrapper) is in `REMOTE_PROGRAMS` has
+  `Command::class() == write.remote`; every other command is
+  `write.worktree` (`run_command`). The class is derived from argv and is
+  not a manifest field, so it cannot be set lower; it is not in the
+  canonical JSON (argv already binds it into the digest).
+  `ResolvedArgv::class` raises it when a value behind a wrapper names a
+  remote program.
+- **Plain text where it runs.** argv literals, env values and `cwd` refuse
+  C0 and C1 controls and DEL (tab, newline and carriage return included),
+  Unicode `Cf`, `Zl` and `Zp` (via `pattern::is_forbidden_char`), and in
+  v0.1 any non-ASCII character. Env names already follow
+  `[A-Z_][A-Z0-9_]*`.
+- **Proposal diff.** `CommandProposal::diff` no longer uses
+  `toml::to_string`. A custom renderer writes one field per line
+  (`argv[0] = "cargo"`, `env."K" = "v"`, `args."a".max_len = 200`), quotes
+  every string, escapes `"` and `\` with `\` and everything outside
+  printable ASCII as `\u{XXXX}`, and quotes a key unless it is
+  `[a-z0-9_]+`. The derived class is shown as a comment line. The diff is
+  therefore not TOML (`\u{XXXX}` is Rust syntax); a proptest reads it back
+  and requires exactly the argv template, env and cwd that `resolve` and
+  the digest use.
+- **Denied env names.** `DENIED_ENV` (`LD_*`, `DYLD_*`, `PATH`,
+  `BASH_ENV`, `ENV`, `*_OPTIONS`, `GIT_*`, `RUSTC`, `RUSTC_WRAPPER`,
+  `CARGO_*_RUNNER`, `CARGO_BUILD_*`, `RUSTFLAGS`, `PYTHON*`, `NODE_*`,
+  `PERL5*`, `IFS`, `SHELLOPTS`, plus `RUSTC_WORKSPACE_WRAPPER`, `RUSTDOC`,
+  `RUSTDOCFLAGS`, `CARGO_ENCODED_RUSTFLAGS`, `CARGO_*_LINKER`, `BASHOPTS`)
+  is refused in every command. A proposal may set only names in
+  `PROPOSAL_ENV_ALLOW`, which is empty: a proposal sets no env.
+- **Option injection.** `allow_dash` is renamed `allow_option` (0.x,
+  unpublished, so no serde alias: one spelling). Values starting with `@`
+  (response files) or `+` (rustup toolchains, `+opt`) are refused like `-`.
+- **Path escape.** A value that is an absolute path or holds a `..`
+  segment (split on `/` and `\`; each `=`-separated part is checked, and
+  leading `-`, `@`, `+` are ignored for the absolute test, so `--out=/x`
+  and `@/x` count) is refused unless the argument sets
+  `allow_path_escape = true` (default false, command arguments only). A
+  short option with a glued path (`-f/etc/x`) is not seen; constrain such
+  an argument.
+- **Tool class floor.** `class` may be omitted and then means
+  `write.remote`; `read` must be written out. The class is the author's
+  assertion, reviewed in git; agents cannot set it (ADR-1122), since
+  proposals never touch tools. `Manifest::lints` lists every `read` tool.
+- **Wrapper programs.** `WRAPPER_PROGRAMS` (shells, `env`, `xargs`,
+  `find`, `nohup`, `timeout`, `nice`, `sudo`, `doas`, `su`, `busybox`,
+  `python*`, `node`, `perl`, `ruby`) is refused as `argv[0]` in a proposal.
+  In a user-authored manifest it is a warning from `Manifest::lints`, not
+  an error.
+- **Secrets bind (host, port).** A secret has a `port` (default 443) and
+  (`host`, `port`) must be an egress entry, so a secret for port 443 is
+  never sent to another port of the same host.
+- **`Args::from_json_str`** parses raw JSON text and refuses a key given
+  twice. `Args::from_json` takes a `Value`, in which serde_json has already
+  kept the last duplicate, so it cannot refuse them.
+- **Not done here.** A `cwd` symlink that leaves the worktree is the
+  executor's job (`openat2` with `RESOLVE_BENEATH`); the crate checks text
+  only. Integer and boolean arguments never clear taint in v0.1; the owner
+  decides whether they should.

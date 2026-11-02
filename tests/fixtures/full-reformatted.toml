@@ -60,9 +60,9 @@ timeout_secs = 3600
 cwd = "crates/core"
 argv = ["cargo", "bench", "{offset}", "--", "{name}", "{jobs}", "{quick}"]
 args.quick = { type = "boolean" }
-args.jobs = { type = "integer", min = 1, max = 64, allow_dash = false }
+args.jobs = { type = "integer", min = 1, max = 64, allow_option = false }
 args.name = { type = "string", required = true }
-args.offset = { type = "integer", min = -10, max = 10, allow_dash = true }
+args.offset = { type = "integer", min = -10, max = 10, allow_option = true }
 
 [commands.test]
 timeout_secs = 900

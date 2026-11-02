@@ -697,3 +697,75 @@ fn verb_params_and_integer_bounds_limits() {
     let (_, p) = m.tool("t0").unwrap().params().next().unwrap();
     assert_eq!((p.min(), p.max()), (Some(5), Some(5)));
 }
+
+#[test]
+fn tool_class_defaults_to_write_remote() {
+    let m = parse(&with("\n[[tools]]\nid = \"t\"\nupstream = \"t\"\n"));
+    assert_eq!(m.tool("t").unwrap().class(), ActionClass::WriteRemote);
+    let m = parse(&with(
+        "\n[[tools]]\nid = \"t\"\nupstream = \"t\"\nclass = \"read\"\n",
+    ));
+    assert_eq!(m.tool("t").unwrap().class(), ActionClass::Read);
+}
+
+#[test]
+fn secrets_are_bound_to_host_and_port() {
+    let m = parse(&with(
+        "\n[[egress]]\nhost = \"a.example.com\"\nport = 8443\n\n[[egress]]\nhost = \"b.example.com\"\n\n\
+         [[secrets]]\nname = \"s\"\nhost = \"a.example.com\"\nport = 8443\nheader = \"X-Key\"\n\n\
+         [[secrets]]\nname = \"t\"\nhost = \"b.example.com\"\nheader = \"X-Key\"\n",
+    ));
+    let s: Vec<_> = m
+        .secrets()
+        .map(|s| (s.name(), s.host(), s.port()))
+        .collect();
+    assert_eq!(
+        s,
+        vec![("s", "a.example.com", 8443), ("t", "b.example.com", 443)]
+    );
+    let base = "\n[[egress]]\nhost = \"a.example.com\"\nport = 8443\n\n[[secrets]]\nname = \"s\"\nhost = \"a.example.com\"\nheader = \"X-Key\"\n";
+    for (port, want) in [
+        ("443", "\"a.example.com\":443 is not in egress"),
+        ("0", "port: 0 is not 1-65535"),
+        ("65536", "port: 65536 is not 1-65535"),
+        ("-1", "port: -1 is not 1-65535"),
+    ] {
+        let e = refuse(&with(&format!("{base}port = {port}\n")));
+        assert!(e.contains(want), "{port}: {e}");
+    }
+    parse(&with(&format!("{base}port = 8443\n")));
+}
+
+#[test]
+fn harmless_env_names_are_kept() {
+    let m = parse(&with(
+        "\n[commands.c]\nargv = [\"x\"]\ntimeout_secs = 1\nenv = { RUST_BACKTRACE = \"1\", CARGO_TERM_COLOR = \"never\", NODE = \"x\", LANG = \"C\", OPTIONS = \"a b\" }\n",
+    ));
+    assert_eq!(m.command("c").unwrap().env().len(), 5);
+}
+
+#[test]
+fn lints_name_wrappers_and_read_tools() {
+    let m = parse(&with(
+        "\n[[tools]]\nid = \"r\"\nupstream = \"get\"\nclass = \"read\"\n\n\
+         [[tools]]\nid = \"w\"\nupstream = \"put\"\n\n\
+         [commands.a]\nargv = [\"/bin/sh\", \"-c\", \"make\"]\ntimeout_secs = 1\n\n\
+         [commands.b]\nargv = [\"python3.12\", \"x.py\"]\ntimeout_secs = 1\n\n\
+         [commands.c]\nargv = [\"cargo\", \"sh\"]\ntimeout_secs = 1\n",
+    ));
+    assert_eq!(
+        m.lints(),
+        vec![
+            "commands.a.argv[0]: \"/bin/sh\" is a wrapper program; it runs whatever its arguments say".to_string(),
+            "commands.b.argv[0]: \"python3.12\" is a wrapper program; it runs whatever its arguments say".to_string(),
+            "tools.r.class: read is the author's assertion that \"get\" only reads".to_string(),
+        ]
+    );
+    assert!(parse(MINIMAL).lints().is_empty());
+    let lints = full().lints();
+    assert_eq!(lints.len(), 1, "{lints:?}");
+    assert!(
+        lints[0].starts_with("tools.gh.issue_read.class"),
+        "{lints:?}"
+    );
+}

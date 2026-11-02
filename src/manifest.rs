@@ -10,7 +10,7 @@ use crate::command::ArgvElement;
 use crate::command::{Args, Command, ResolvedArgv};
 use crate::digest::{ManifestDigest, digest_canonical};
 use crate::error::ManifestError;
-use crate::schema::ActionClass;
+use crate::schema::{ActionClass, WRAPPER_PROGRAMS, program_matches};
 use crate::validate;
 
 /// The schema version this crate writes. The loader also reads
@@ -143,6 +143,7 @@ impl Egress {
 pub struct Secret {
     pub(crate) name: String,
     pub(crate) host: String,
+    pub(crate) port: u16,
     pub(crate) header: String,
     pub(crate) scheme: Option<String>,
 }
@@ -152,9 +153,14 @@ impl Secret {
     pub fn name(&self) -> &str {
         &self.name
     }
-    /// The only host it is sent to; always in the manifest's egress list.
+    /// The only host it is sent to. (`host`, `port`) is always in the
+    /// manifest's egress list.
     pub fn host(&self) -> &str {
         &self.host
+    }
+    /// The only port it is sent to (default 443).
+    pub fn port(&self) -> u16 {
+        self.port
     }
     /// HTTP header that carries it.
     pub fn header(&self) -> &str {
@@ -253,7 +259,9 @@ pub struct Param {
     /// String only.
     pub(crate) constraint: Option<Constraint>,
     /// Command arguments only.
-    pub(crate) allow_dash: Option<bool>,
+    pub(crate) allow_option: Option<bool>,
+    /// Command arguments only.
+    pub(crate) allow_path_escape: Option<bool>,
 }
 
 impl Param {
@@ -281,9 +289,16 @@ impl Param {
     pub fn constraint(&self) -> Option<&Constraint> {
         self.constraint.as_ref()
     }
-    /// True when a value may start with `-` (command arguments only).
-    pub fn allow_dash(&self) -> bool {
-        self.allow_dash.unwrap_or(false)
+    /// True when a value may look like an option: start with `-`, `@`
+    /// (a response file for rustc, gcc, javac) or `+` (a rustup toolchain,
+    /// `+opt` options). Command arguments only; default false.
+    pub fn allow_option(&self) -> bool {
+        self.allow_option.unwrap_or(false)
+    }
+    /// True when a value may be an absolute path or hold a `..` path
+    /// segment. Command arguments only; default false.
+    pub fn allow_path_escape(&self) -> bool {
+        self.allow_path_escape.unwrap_or(false)
     }
 }
 
@@ -461,7 +476,12 @@ impl Manifest {
             .secrets
             .iter()
             .map(|s| {
-                let mut v = json!({ "name": s.name, "host": s.host, "header": s.header });
+                let mut v = json!({
+                    "name": s.name,
+                    "host": s.host,
+                    "port": s.port,
+                    "header": s.header,
+                });
                 if let Some(scheme) = &s.scheme {
                     v["scheme"] = scheme.clone().into();
                 }
@@ -642,6 +662,34 @@ impl Manifest {
         });
         verbs.chain(tools).chain(commands)
     }
+
+    /// Warnings about rules a user-authored manifest may break on purpose,
+    /// for the reviewer: commands that run a wrapper program
+    /// ([`WRAPPER_PROGRAMS`]: a proposal may not), and tools of class
+    /// `read`. A tool's class is the author's assertion, reviewed in git; an
+    /// agent never sets it, since proposals never touch tools. Each warning
+    /// starts with the path of the field.
+    pub fn lints(&self) -> Vec<String> {
+        let wrappers = self.commands.iter().filter_map(|(name, c)| match c.argv.first() {
+            Some(ArgvElement::Literal(prog)) if program_matches(WRAPPER_PROGRAMS, prog) => {
+                Some(format!(
+                    "commands.{name}.argv[0]: {prog:?} is a wrapper program; it runs whatever its arguments say"
+                ))
+            }
+            _ => None,
+        });
+        let reads = self
+            .tools
+            .iter()
+            .filter(|t| t.class == ActionClass::Read)
+            .map(|t| {
+                format!(
+                    "tools.{}.class: read is the author's assertion that {:?} only reads",
+                    t.id, t.upstream
+                )
+            });
+        wrappers.chain(reads).collect()
+    }
 }
 
 /// Parse TOML text into a table, refusing files over the size limit.
@@ -679,8 +727,11 @@ fn param_json(p: &Param) -> Value {
     if let Some(c) = &p.constraint {
         m.insert("constraint".into(), constraint_json(c));
     }
-    if let Some(d) = p.allow_dash {
-        m.insert("allow_dash".into(), d.into());
+    if let Some(d) = p.allow_option {
+        m.insert("allow_option".into(), d.into());
+    }
+    if let Some(d) = p.allow_path_escape {
+        m.insert("allow_path_escape".into(), d.into());
     }
     Value::Object(m)
 }

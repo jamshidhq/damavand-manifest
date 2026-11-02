@@ -1,4 +1,4 @@
-# expect: 2000 allow_dash
+# expect: 2000 allow_option
 schema = 1
 id = "m"
 kind = "connector"
@@ -9,4 +9,4 @@ upstream = "t"
 class = "read"
 [tools.params.p]
 type = "string"
-allow_dash = true
+allow_option = true

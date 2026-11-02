@@ -29,7 +29,12 @@ for (key, constraint) in m.constraints() {
 }
 let run = m.resolve("test", &Args::new().with("filter", "parse::limits"))?;
 // run.argv, run.cwd, run.env, run.timeout_secs; no shell.
+// run.class is the action class to check (write.worktree, or
+// write.remote for a remote program).
 // run.uncleared lists the arguments policy must escalate.
+for warning in m.lints() {
+    // wrapper programs and `read` tools, for the reviewer
+}
 ```
 
 ## Manifest
@@ -49,16 +54,16 @@ aws_role = "arn:aws:iam::123456789012:role/jamshid-reader"
 [[egress]]                  # exact lowercase host, HTTPS, no wildcards
 host = "api.github.com"     # port = 443 by default
 
-[[secrets]]                 # name only; host must be in egress
+[[secrets]]                 # name only; (host, port) must be in egress
 name = "github_token"
-host = "api.github.com"
+host = "api.github.com"     # port = 443 by default"
 header = "Authorization"
 scheme = "Bearer"
 
 [[tools]]
 id = "gh.issue_read"        # never a schema verb or a Never action
 upstream = "get_issue"      # the real MCP tool name
-class = "read"              # never "never"
+class = "read"              # never "never"; omitted = "write.remote"
 params.repo = { type = "string", required = true, max_len = 100, constraint = { pattern = "[a-z0-9_.-]+/[a-z0-9_.-]+" } }
 
 [verbs.j_edit.mode]         # project manifests only
@@ -76,9 +81,9 @@ args.filter = { type = "string", max_len = 200, constraint = { pattern = "[a-z0-
 | --- | --- |
 | Parsing | Unknown fields, duplicate keys, floats, datetimes and integers beyond ±(2^53 - 1) are refused. |
 | Limits | 256 KiB per file, 4 KiB per string or key, 256 tools, 64 parameters per tool, command or verb, 128 commands, 64 argv elements, 64 egress entries, 32 secrets, 64 env variables, 256 enum values. |
-| Classes | A manifest sets a class only for its own tools. `never`, schema verbs and Never actions are refused as tool ids; a verb never takes a class. |
+| Classes | A manifest sets a class only for its own tools; an omitted class is `write.remote`, so `read` is always written out (and listed by `lints`). The class is the author's assertion, reviewed in git; proposals never touch tools. `never`, schema verbs and Never actions are refused as tool ids; a verb never takes a class. A command's class is derived: `write.remote` when its program is in `REMOTE_PROGRAMS` (kubectl, helm, aws, ...), else `write.worktree`. |
 | Constraints | One non-empty enum or one pattern. Patterns go through `pattern::compile_pattern` (anchored; refused if they can match the empty string, a character in `Cc`, `Cf`, `Zl` or `Zp`, or a shell metacharacter). An empty value never clears. Only a constraint clears taint. |
-| Commands | argv only, no shell. `argv[0]` is a literal. A placeholder fills a whole element; an absent optional argument deletes its element. `--` must come before the first placeholder unless `options_ok = true`. A value starting with `-` is refused unless the argument has `allow_dash = true`. Fixed env, relative `cwd` without `..`. |
+| Commands | argv only, no shell. `argv[0]` is a literal and never a Never program (`NEVER_PROGRAMS`, also behind a wrapper such as `env` or `sh -c`). A placeholder fills a whole element; an absent optional argument deletes its element. `--` must come before the first placeholder unless `options_ok = true`. A value starting with `-`, `@` or `+` is refused unless the argument has `allow_option = true`; an absolute path or a `..` segment unless it has `allow_path_escape = true`. argv literals, env values and `cwd` are printable ASCII. Fixed env without the names in `DENIED_ENV` (`LD_*`, `PATH`, `GIT_*`, ...), relative `cwd` without `..`. |
 | Audit | `metadata` only when every tool is class `read` and there are no commands, verbs or secrets. |
 
 ## Canonical form and digest
@@ -94,9 +99,12 @@ refuses bytes that are not exactly the canonical form.
 
 An agent never runs a command the manifest lacks. It can propose one:
 `CommandProposal::parse` validates the addition against the base manifest,
-`diff` renders it for the user, and after the user approves, the core calls
-`apply` (refused if the base moved on) and commits the result as a
-user-authored revision with a new digest.
+`diff` renders it for the user (one field per line, every string quoted,
+anything outside printable ASCII escaped as `\u{XXXX}`), and after the user
+approves, the core calls `apply` (refused if the base moved on) and commits
+the result as a user-authored revision with a new digest. A proposal is held to more than
+a manifest: `argv[0]` is never a wrapper program (`WRAPPER_PROGRAMS`: shells,
+`env`, `xargs`, `sudo`, interpreters), and it sets no `env`.
 
 ## Wire (damavand-proto)
 

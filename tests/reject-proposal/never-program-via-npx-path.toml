@@ -1,0 +1,3 @@
+# expect: 2000 is a Never program
+argv = ["node_modules/.bin/cdk", "deploy"]
+timeout_secs = 1

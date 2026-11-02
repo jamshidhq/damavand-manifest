@@ -38,4 +38,8 @@ pub use manifest::{
     SCHEMA_VERSION, Secret, Tool, limits,
 };
 pub use revision::{CommandProposal, PROPOSAL_DOMAIN, ProposalDigest};
-pub use schema::{ActionClass, MCP_CALL, NEVER_ACTIONS, RUN_COMMAND, SCHEMA_VERBS};
+pub use schema::{
+    ActionClass, DENIED_ENV, MCP_CALL, NEVER_ACTIONS, NEVER_PROGRAMS, PROPOSAL_ENV_ALLOW,
+    REMOTE_PROGRAMS, RUN_COMMAND, SCHEMA_VERBS, WRAPPER_PROGRAMS, glob_matches, is_denied_env,
+    program_basename, program_matches,
+};

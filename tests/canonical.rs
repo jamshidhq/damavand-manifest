@@ -37,7 +37,7 @@ args.p = { type = "string", constraint = { pattern = "[a-z]+" } }
 "#;
 
 const MEDIUM_CANONICAL: &str = concat!(
-    r#"{"audit":"full","autonomy":{},"commands":{"ls":{"args":{"p":{"allow_dash":false,"constraint":{"pattern":"[a-z]+"},"max_len":4096,"required":false,"type":"string"}},"#,
+    r#"{"audit":"full","autonomy":{},"commands":{"ls":{"args":{"p":{"allow_option":false,"allow_path_escape":false,"constraint":{"pattern":"[a-z]+"},"max_len":4096,"required":false,"type":"string"}},"#,
     r#""argv":["ls","--","{p}"],"cwd":".","env":{},"max_output_bytes":1048576,"options_ok":false,"output":"full","timeout_secs":5}},"#,
     r#""egress":[{"host":"api.github.com","port":443}],"id":"gh","kind":"connector","schema":1,"secrets":[],"#,
     r#""tools":[{"class":"read","id":"issue","params":{"n":{"max":9007199254740991,"min":-9007199254740991,"required":true,"type":"integer"},"#,
@@ -78,8 +78,8 @@ fn identity_and_secret_scheme_are_written_when_set() {
     assert_eq!(
         v["secrets"],
         json!([
-            {"header": "X-Token", "host": "crates.io", "name": "crates_token"},
-            {"header": "Authorization", "host": "api.github.com", "name": "github_token", "scheme": "Bearer"},
+            {"header": "X-Token", "host": "crates.io", "name": "crates_token", "port": 443},
+            {"header": "Authorization", "host": "api.github.com", "name": "github_token", "port": 443, "scheme": "Bearer"},
         ])
     );
     assert_eq!(v["autonomy"], json!({"egress": 2, "write.remote": 1}));
@@ -96,7 +96,7 @@ fn identity_and_secret_scheme_are_written_when_set() {
     );
     assert_eq!(
         v["commands"]["bench"]["args"]["offset"],
-        json!({"allow_dash": true, "max": 10, "min": -10, "required": false, "type": "integer"})
+        json!({"allow_option": true, "allow_path_escape": false, "max": 10, "min": -10, "required": false, "type": "integer"})
     );
 }
 

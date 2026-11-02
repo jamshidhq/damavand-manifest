@@ -8,14 +8,18 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::command::{ArgvElement, Command, Output};
+use crate::command::{literals, program_words};
 use crate::digest::MAX_SAFE_INTEGER;
 use crate::error::ManifestError;
 use crate::manifest::{
     Audit, Constraint, Egress, Kind, Manifest, ModuleId, Param, ParamType, Pattern, SCHEMA_VERSION,
     Secret, Tool, limits,
 };
-use crate::pattern::compile_pattern;
-use crate::schema::{ActionClass, MCP_CALL, RUN_COMMAND, is_never, is_schema_verb};
+use crate::pattern::{compile_pattern, is_forbidden_char};
+use crate::schema::{
+    ActionClass, MCP_CALL, NEVER_PROGRAMS, PROPOSAL_ENV_ALLOW, RUN_COMMAND, WRAPPER_PROGRAMS,
+    is_denied_env, is_never, is_schema_verb, program_matches,
+};
 
 type Result<T> = std::result::Result<T, ManifestError>;
 
@@ -65,6 +69,7 @@ struct RawSecret {
     host: String,
     header: String,
     scheme: Option<String>,
+    port: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -72,7 +77,7 @@ struct RawSecret {
 struct RawTool {
     id: String,
     upstream: String,
-    class: String,
+    class: Option<String>,
     #[serde(default)]
     params: BTreeMap<String, RawParam>,
 }
@@ -101,7 +106,8 @@ struct RawParam {
     min: Option<i64>,
     max: Option<i64>,
     constraint: Option<RawConstraint>,
-    allow_dash: Option<bool>,
+    allow_option: Option<bool>,
+    allow_path_escape: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -204,6 +210,48 @@ fn check_str(path: &str, what: &str, s: &str) -> Result<()> {
         return invalid(format!("{path}: NUL in {what}"));
     }
     Ok(())
+}
+
+/// Text that reaches a process (argv literals, env names and values, cwd):
+/// no control characters (C0, C1, DEL), no Unicode format characters or
+/// line and paragraph separators, and in v0.1 nothing outside ASCII at
+/// all. What the user approves is then exactly what runs.
+fn check_plain(path: &str, what: &str, s: &str) -> Result<()> {
+    for c in s.chars() {
+        if c.is_control() || (!c.is_ascii() && is_forbidden_char(c)) {
+            return invalid(format!(
+                "{path}: control or format character U+{:04X} in {what}",
+                c as u32
+            ));
+        }
+        if !c.is_ascii() {
+            return invalid(format!(
+                "{path}: non-ASCII character U+{:04X} in {what} (v0.1 allows printable ASCII only)",
+                c as u32
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Who wrote a command: the user (a reviewed manifest) or an agent (a
+/// [`crate::CommandProposal`]). Agent commands follow stricter rules.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Origin {
+    User,
+    Agent,
+}
+
+/// Refuse a command that runs a Never program, directly or behind a
+/// wrapper.
+fn check_programs(path: &str, argv: &[ArgvElement]) -> Result<()> {
+    match program_words(literals(argv))
+        .into_iter()
+        .find(|w| program_matches(NEVER_PROGRAMS, w))
+    {
+        Some(w) => invalid(format!("{path}.argv: {w:?} is a Never program")),
+        None => Ok(()),
+    }
 }
 
 fn check_int(path: &str, n: i64) -> Result<()> {
@@ -356,7 +404,7 @@ pub(crate) fn validate(raw: RawManifest) -> Result<Manifest> {
     }
     let mut commands = BTreeMap::new();
     for (name, c) in raw.commands {
-        let cmd = command(&name, c)?;
+        let cmd = command(&name, c, Origin::User)?;
         commands.insert(name, cmd);
     }
     let m = Manifest {
@@ -382,6 +430,9 @@ pub(crate) fn cross_check(m: &Manifest) -> Result<()> {
             "commands: more than {} commands",
             limits::MAX_COMMANDS
         ));
+    }
+    for (name, c) in &m.commands {
+        check_programs(&format!("commands.{name}"), &c.argv)?;
     }
     if m.audit == Audit::Metadata {
         let why = if let Some(t) = m.tools.iter().find(|t| t.class != ActionClass::Read) {
@@ -468,8 +519,18 @@ fn secrets(raw: Vec<RawSecret>, egress: &[Egress]) -> Result<Vec<Secret>> {
                 s.name
             ));
         }
-        if !egress.iter().any(|e| e.host == s.host) {
-            return invalid(format!("secrets[{i}].host: {:?} is not in egress", s.host));
+        let port = match s.port {
+            None => 443,
+            Some(p) => match u16::try_from(p) {
+                Ok(p) if p >= 1 => p,
+                _ => return invalid(format!("secrets[{i}].port: {p} is not 1-65535")),
+            },
+        };
+        if !egress.iter().any(|e| e.host == s.host && e.port == port) {
+            return invalid(format!(
+                "secrets[{i}]: {:?}:{port} is not in egress",
+                s.host
+            ));
         }
         if !is_token(&s.header) {
             return invalid(format!(
@@ -490,6 +551,7 @@ fn secrets(raw: Vec<RawSecret>, egress: &[Egress]) -> Result<Vec<Secret>> {
         out.push(Secret {
             name: s.name,
             host: s.host,
+            port,
             header: s.header,
             scheme: s.scheme,
         });
@@ -521,8 +583,14 @@ fn tools(raw: Vec<RawTool>) -> Result<Vec<Tool>> {
                 limits::MAX_UPSTREAM_BYTES
             ));
         }
-        let class = match ActionClass::from_name(&t.class) {
-            None => return invalid(format!("{path}.class: unknown class {:?}", t.class)),
+        // Omitted: the floor for a tool that can act remotely. `read` must
+        // be written out.
+        let class_name = t
+            .class
+            .as_deref()
+            .unwrap_or(ActionClass::WriteRemote.name());
+        let class = match ActionClass::from_name(class_name) {
+            None => return invalid(format!("{path}.class: unknown class {class_name:?}")),
             Some(ActionClass::Never) => {
                 return invalid(format!("{path}.class: a tool can never be class never"));
             }
@@ -657,13 +725,13 @@ fn param(path: &str, p: RawParam, command_arg: bool) -> Result<Param> {
             ty.name()
         ))
     };
-    let allow_dash = match (command_arg, p.allow_dash) {
-        (false, Some(_)) => {
-            return invalid(format!("{path}.allow_dash: only for command arguments"));
-        }
-        (false, None) => None,
-        (true, v) => Some(v.unwrap_or(false)),
+    let command_only = |field: &str, v: Option<bool>| match (command_arg, v) {
+        (false, Some(_)) => invalid(format!("{path}.{field}: only for command arguments")),
+        (false, None) => Ok(None),
+        (true, v) => Ok(Some(v.unwrap_or(false))),
     };
+    let allow_option = command_only("allow_option", p.allow_option)?;
+    let allow_path_escape = command_only("allow_path_escape", p.allow_path_escape)?;
     let mut out = Param {
         ty: p.ty,
         required: p.required.unwrap_or(false),
@@ -671,7 +739,8 @@ fn param(path: &str, p: RawParam, command_arg: bool) -> Result<Param> {
         min: None,
         max: None,
         constraint: None,
-        allow_dash,
+        allow_option,
+        allow_path_escape,
     };
     match p.ty {
         ParamType::String => {
@@ -725,7 +794,7 @@ fn param(path: &str, p: RawParam, command_arg: bool) -> Result<Param> {
     Ok(out)
 }
 
-pub(crate) fn command(name: &str, c: RawCommand) -> Result<Command> {
+pub(crate) fn command(name: &str, c: RawCommand, origin: Origin) -> Result<Command> {
     let path = format!("commands.{name}");
     if !is_id(name) {
         return invalid(format!("{path}: name is not [a-z][a-z0-9_.]*"));
@@ -748,6 +817,7 @@ pub(crate) fn command(name: &str, c: RawCommand) -> Result<Command> {
             return invalid(format!("{epath}: empty element"));
         }
         if !el.contains(['{', '}']) {
+            check_plain(&epath, "argv literal", &el)?;
             argv.push(ArgvElement::Literal(el));
             continue;
         }
@@ -778,6 +848,15 @@ pub(crate) fn command(name: &str, c: RawCommand) -> Result<Command> {
     if let Some(unused) = args.keys().find(|a| !used.contains(*a)) {
         return invalid(format!("{path}.args.{unused}: unused in argv"));
     }
+    check_programs(&path, &argv)?;
+    if origin == Origin::Agent
+        && let Some(ArgvElement::Literal(prog)) = argv.first()
+        && program_matches(WRAPPER_PROGRAMS, prog)
+    {
+        return invalid(format!(
+            "{path}.argv[0]: {prog:?} is a wrapper program; a proposal cannot use one"
+        ));
+    }
     let options_ok = c.options_ok.unwrap_or(false);
     if !options_ok
         && let Some(first) = argv
@@ -795,6 +874,7 @@ pub(crate) fn command(name: &str, c: RawCommand) -> Result<Command> {
     if cwd.is_empty() {
         return invalid(format!("{path}.cwd: empty"));
     }
+    check_plain(&format!("{path}.cwd"), "cwd", &cwd)?;
     if cwd.starts_with('/') {
         return invalid(format!("{path}.cwd: {cwd:?} is absolute"));
     }
@@ -810,8 +890,20 @@ pub(crate) fn command(name: &str, c: RawCommand) -> Result<Command> {
             limits::MAX_ENV
         ));
     }
-    if let Some(k) = c.env.keys().find(|k| !is_env_name(k)) {
-        return invalid(format!("{path}.env.{k}: name is not [A-Z_][A-Z0-9_]*"));
+    for (k, v) in &c.env {
+        let epath = format!("{path}.env.{k}");
+        if !is_env_name(k) {
+            return invalid(format!("{epath}: name is not [A-Z_][A-Z0-9_]*"));
+        }
+        if is_denied_env(k) {
+            return invalid(format!("{epath}: {k} is a denied environment variable"));
+        }
+        if origin == Origin::Agent && !PROPOSAL_ENV_ALLOW.contains(&k.as_str()) {
+            return invalid(format!(
+                "{epath}: {k} is not on the proposal allow list (a proposal sets no env)"
+            ));
+        }
+        check_plain(&epath, "env value", v)?;
     }
     let timeout_secs = match u32::try_from(c.timeout_secs) {
         Ok(t) if (1..=limits::MAX_TIMEOUT_SECS).contains(&t) => t,
@@ -901,5 +993,43 @@ mod tests {
         assert!(!is_upstream(""));
         assert!(is_upstream(&"a".repeat(128)));
         assert!(!is_upstream(&"a".repeat(129)));
+    }
+
+    #[test]
+    fn cross_check_refuses_a_never_program_however_the_command_got_in() {
+        // Every parser runs `command` first; cross_check is the second
+        // wall, for a manifest assembled any other way (a revision).
+        let text = "schema = 1\nid = \"m\"\nkind = \"connector\"\n[commands.c]\nargv = [\"x\"]\ntimeout_secs = 1\n";
+        let mut m = Manifest::parse_toml(text).unwrap();
+        assert!(cross_check(&m).is_ok());
+        let c = m.commands.get_mut("c").unwrap();
+        c.argv = vec![
+            ArgvElement::Literal("nohup".into()),
+            ArgvElement::Literal("terraform".into()),
+        ];
+        let e = cross_check(&m).unwrap_err().to_string();
+        assert!(
+            e.contains("commands.c.argv: \"terraform\" is a Never program"),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn plain_text_rule() {
+        assert!(check_plain("p", "w", "a b~!$;|&\"'\\{}").is_ok());
+        assert!(check_plain("p", "w", "").is_ok());
+        for (s, want) in [
+            ("\t", "control or format character U+0009"),
+            ("\u{7f}", "control or format character U+007F"),
+            ("\u{9f}", "control or format character U+009F"),
+            ("\u{feff}", "control or format character U+FEFF"),
+            ("\u{2029}", "control or format character U+2029"),
+            ("\u{e9}", "non-ASCII character U+00E9"),
+            ("\u{a0}", "non-ASCII character U+00A0"),
+            ("\u{1F600}", "non-ASCII character U+1F600"),
+        ] {
+            let e = check_plain("p", "w", s).unwrap_err().to_string();
+            assert!(e.contains(want) && e.contains("p: "), "{s:?}: {e}");
+        }
     }
 }
