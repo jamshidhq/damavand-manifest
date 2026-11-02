@@ -5,14 +5,16 @@ mod common;
 use common::*;
 use std::collections::BTreeMap;
 
-use damavand_manifest::{Args, ArgvElement, CommandProposal, ManifestError, wire};
+use damavand_manifest::{
+    Args, ArgvElement, CommandProposal, ManifestError, PROPOSAL_FORBIDDEN_CHARS, wire,
+};
 use proptest::prelude::*;
 
 const CLIPPY: &str = r#"
 argv = ["cargo", "clippy", "--", "{lint}"]
 timeout_secs = 600
 output = "errors-only"
-args.lint = { type = "string", constraint = { enum = ["-Dwarnings"] }, allow_option = true }
+args.lint = { type = "string", constraint = { enum = ["warnings"] } }
 "#;
 
 #[test]
@@ -28,9 +30,9 @@ fn a_proposal_is_pending_until_applied() {
     let revised = p.apply(&base).unwrap();
     assert_ne!(revised.digest(), base.digest());
     let r = revised
-        .resolve("clippy", &Args::new().with("lint", "-Dwarnings"))
+        .resolve("clippy", &Args::new().with("lint", "warnings"))
         .unwrap();
-    assert_eq!(r.argv, vec!["cargo", "clippy", "--", "-Dwarnings"]);
+    assert_eq!(r.argv, vec!["cargo", "clippy", "--", "warnings"]);
     assert!(r.uncleared.is_empty());
     // Everything else is kept.
     assert_eq!(revised.commands().count(), base.commands().count() + 1);
@@ -66,7 +68,7 @@ fn proposals_are_validated_like_manifests() {
         ("Bad", CLIPPY, "commands"),
         (
             "x",
-            "argv = [\"x\", \"-c\", \"{s}\"]\ntimeout_secs = 1\nargs.s = { type = \"string\" }\n",
+            "argv = [\"x\", \"-v\", \"{s}\"]\ntimeout_secs = 1\nargs.s = { type = \"string\" }\n",
             "`--`",
         ),
         ("x", "argv = [\"x\"]\n", "timeout_secs"),
@@ -184,9 +186,9 @@ fn diff_shows_one_field_per_line() {
     let want = [
         "+ [commands.clippy]",
         "+ # class: write.worktree (derived from argv; not a field)",
-        "+ args.lint.allow_option = true",
+        "+ args.lint.allow_option = false",
         "+ args.lint.allow_path_escape = false",
-        "+ args.lint.constraint.enum[0] = \"-Dwarnings\"",
+        "+ args.lint.constraint.enum[0] = \"warnings\"",
         "+ args.lint.max_len = 4096",
         "+ args.lint.required = false",
         "+ args.lint.type = \"string\"",
@@ -208,7 +210,9 @@ fn diff_shows_one_field_per_line() {
     assert_eq!(cwd, ".");
     // A remote program shows its floor class, and keys outside
     // [a-z0-9_] are quoted.
-    let base = parse(MINIMAL);
+    let base = parse(&with(
+        "\n[commands.k]\nargv = [\"kubectl\", \"version\"]\ntimeout_secs = 1\n",
+    ));
     let p = CommandProposal::parse(
         &base,
         "k.get",
@@ -232,7 +236,9 @@ fn proposal_digest_binds_base_name_and_command() {
     assert_ne!(p.digest(), renamed.digest());
     let changed = CommandProposal::parse(&base, "clippy", &CLIPPY.replace("600", "601")).unwrap();
     assert_ne!(p.digest(), changed.digest());
-    let other_base = parse(MINIMAL);
+    let other_base = parse(&with(
+        "\n[commands.t]\nargv = [\"cargo\", \"test\"]\ntimeout_secs = 1\n",
+    ));
     let rebased = CommandProposal::parse(&other_base, "clippy", CLIPPY).unwrap();
     assert_ne!(p.digest(), rebased.digest());
     assert_eq!(p.digest().to_string().len(), 64);
@@ -278,7 +284,7 @@ fn diff_is_printable_ascii_whatever_the_command_holds() {
     // Enum values are not refused for controls or bidi characters, so the
     // diff must show them escaped: what the user reads is what runs.
     let base = full();
-    let body = "argv = [\"cargo\", \"x\\\\y\", \"q\\\"z\", \"--\", \"{p}\"]\ntimeout_secs = 1\nargs.p = { type = \"string\", constraint = { enum = [\"a\\u202Eb\", \"c\\nd\", \"e\\u0085\"] } }\n";
+    let body = "argv = [\"cargo\", \"--\", \"{p}\"]\ntimeout_secs = 1\nargs.p = { type = \"string\", constraint = { enum = [\"a\\u202Eb\", \"c\\nd\", \"e\\u0085\", \"x\\\\y\", \"q\\\"z\"] } }\n";
     let p = CommandProposal::parse(&base, "x", body).unwrap();
     let diff = p.diff();
     for line in diff.lines() {
@@ -324,6 +330,19 @@ fn tricky_string(max: usize) -> impl Strategy<Value = String> {
     .prop_map(|v| v.into_iter().collect())
 }
 
+/// Literals a proposal may write: printable ASCII without quotes or shell
+/// metacharacters; sometimes anything (refused).
+fn word_string(max: usize) -> impl Strategy<Value = String> {
+    let word = prop::char::range(' ', '~').prop_filter("no metacharacter", |c| {
+        !PROPOSAL_FORBIDDEN_CHARS.contains(c)
+    });
+    prop_oneof![
+        4 => prop::collection::vec(word, 1..max),
+        1 => prop::collection::vec(tricky_char(), 1..max),
+    ]
+    .prop_map(|v| v.into_iter().collect())
+}
+
 fn printable(s: &str) -> bool {
     s.bytes().all(|b| (0x20..=0x7e).contains(&b))
 }
@@ -338,13 +357,17 @@ proptest! {
     /// is refused.
     #[test]
     fn diff_maps_one_to_one_onto_what_runs(
-        literals in prop::collection::vec(tricky_string(12), 1..5),
+        literals in prop::collection::vec(word_string(12), 0..4),
         cwd in prop::option::of(tricky_string(10)),
         values in prop::collection::vec(tricky_string(8), 1..4),
     ) {
-        let base = parse(MINIMAL);
+        // The proposal reuses the base's program, as it must.
+        let base = parse(&with(
+            "\n[commands.b]\nargv = [\"prog\"]\ntimeout_secs = 1\n",
+        ));
         let mut table = toml::Table::new();
-        let mut argv: Vec<toml::Value> = literals.iter().cloned().map(toml::Value::String).collect();
+        let mut argv: Vec<toml::Value> = vec!["prog".into()];
+        argv.extend(literals.iter().cloned().map(toml::Value::String));
         argv.push("--".into());
         argv.push("{p}".into());
         table.insert("argv".into(), toml::Value::Array(argv));
@@ -396,4 +419,81 @@ proptest! {
             prop_assert!(CommandProposal::parse(&base, "c", &text).is_err());
         }
     }
+}
+
+#[test]
+fn proposal_literals_hold_no_shell_metacharacter() {
+    let base = full();
+    for c in [
+        '\'', '"', '\\', '$', '`', ';', '|', '&', '<', '>', '(', ')', '*', '?', '[', ']', '{', '}',
+        '~', '#', '!',
+    ] {
+        let mut lit = String::from("a");
+        lit.push(c);
+        let mut argv = toml::Table::new();
+        argv.insert(
+            "argv".into(),
+            toml::Value::Array(vec!["cargo".into(), lit.clone().into()]),
+        );
+        argv.insert("timeout_secs".into(), 1.into());
+        let text = toml::to_string(&argv).unwrap();
+        let e = CommandProposal::parse(&base, "x", &text).unwrap_err();
+        assert_eq!(e.code(), wire::codes::MANIFEST_INVALID, "{lit:?}: {e}");
+        // Braces make a bad placeholder before the metacharacter rule runs.
+        if c != '{' && c != '}' {
+            assert!(
+                e.to_string().contains("shell metacharacter"),
+                "{lit:?}: {e}"
+            );
+        }
+    }
+    // Plain words, options and paths are fine.
+    let ok = "argv = [\"cargo\", \"test\", \"--release\", \"-p\", \"a-b_c.d/e=f+g,h:i@j%k^l\"]\ntimeout_secs = 1\n";
+    CommandProposal::parse(&base, "x", ok).unwrap();
+}
+
+#[test]
+fn proposal_program_must_already_be_approved() {
+    // The base runs only cargo; kubectl is refused until the user adds it.
+    let base = full();
+    let kubectl = "argv = [\"kubectl\", \"get\", \"pods\"]\ntimeout_secs = 1\n";
+    let e = CommandProposal::parse(&base, "k", kubectl).unwrap_err();
+    assert!(
+        e.to_string()
+            .contains("not the program of a command in the base manifest"),
+        "{e}"
+    );
+    let with_kubectl = parse(&with(
+        "\n[commands.k]\nargv = [\"kubectl\", \"version\"]\ntimeout_secs = 1\n",
+    ));
+    CommandProposal::parse(&with_kubectl, "k2", kubectl).unwrap();
+    // A user-approved shell can be proposed again, but not with code from
+    // an argument.
+    let with_sh = parse(&with(
+        "\n[commands.s]\nargv = [\"sh\", \"scripts/check.sh\"]\ntimeout_secs = 1\n",
+    ));
+    CommandProposal::parse(
+        &with_sh,
+        "s2",
+        "argv = [\"sh\", \"scripts/lint.sh\"]\ntimeout_secs = 1\n",
+    )
+    .unwrap();
+    let e = CommandProposal::parse(
+        &with_sh,
+        "s3",
+        "argv = [\"sh\", \"-c\", \"--\", \"{code}\"]\ntimeout_secs = 1\nargs.code = { type = \"string\" }\n",
+    )
+    .unwrap_err();
+    assert!(
+        e.to_string()
+            .contains("follows the code-taking flag \"-c\""),
+        "{e}"
+    );
+    // A placeholder before the flag is not code.
+    CommandProposal::parse(
+        &with_sh,
+        "s4",
+        "argv = [\"sh\", \"--\", \"{f}\", \"-c\"]\ntimeout_secs = 1\nargs.f = { type = \"string\", constraint = { enum = [\"a\"] } }\n",
+    )
+    .unwrap();
 }

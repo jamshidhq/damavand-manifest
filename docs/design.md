@@ -260,9 +260,10 @@ corpus entries in `tests/reject/` (manifests) or `tests/reject-proposal/`
   proposals never touch tools. `Manifest::lints` lists every `read` tool.
 - **Wrapper programs.** `WRAPPER_PROGRAMS` (shells, `env`, `xargs`,
   `find`, `nohup`, `timeout`, `nice`, `sudo`, `doas`, `su`, `busybox`,
-  `python*`, `node`, `perl`, `ruby`) is refused as `argv[0]` in a proposal.
-  In a user-authored manifest it is a warning from `Manifest::lints`, not
-  an error.
+  `python*`, `node`, `perl`, `ruby`) is a warning from `Manifest::lints` in
+  a user-authored manifest, and makes the Never and class checks read every
+  later word. It is a partial list, so it is not what bounds proposals
+  (round 2).
 - **Secrets bind (host, port).** A secret has a `port` (default 443) and
   (`host`, `port`) must be an egress entry, so a secret for port 443 is
   never sent to another port of the same host.
@@ -273,3 +274,30 @@ corpus entries in `tests/reject/` (manifests) or `tests/reject-proposal/`
   executor's job (`openat2` with `RESOLVE_BENEATH`); the crate checks text
   only. Integer and boolean arguments never clear taint in v0.1; the owner
   decides whether they should.
+
+### Review round 2 (PR #1)
+
+A denylist of programs fails open (ksh, awk, make, `git -c`, ssh, ...),
+and splitting literals into words is not a boundary for a shell or an
+interpreter. Proposals are therefore bounded fail-closed:
+
+- **Approved program only.** A `CommandProposal`'s `argv[0]` must be
+  exactly the `argv[0]` of a command already in the base manifest (all of
+  which the user wrote or approved). The match is on the whole string, not
+  only the basename: `/tmp/x/cargo` is a different binary from `cargo`.
+  Anything else is refused; the user adds new programs in a reviewed change.
+- **No code from arguments.** No placeholder may come after a literal in
+  `CODE_FLAGS` (`-c`, `-e`, `-E`, `--eval`, `--command`, `--exec`, `-exec`,
+  `-execdir`, `-ok`, `-okdir`, `-x`; also as `--flag=value`). One const,
+  in `schema.rs`.
+- **No metacharacters in literals.** A proposal's argv literals may not
+  hold any of `PROPOSAL_FORBIDDEN_CHARS`: single and double quote,
+  backslash, backtick, and `$ ; | & < > ( ) * ? [ ] { } ~ # !`.
+- **No widening (ADR-1122).** A proposal cannot set `allow_option`,
+  `allow_path_escape` or `options_ok` to true; only a user-authored
+  manifest may.
+- **Shells and interpreters are a class floor.** A command whose program
+  (`argv[0]`, or a literal word behind a wrapper) is in
+  `INTERPRETER_PROGRAMS` (the shells, busybox, `python*`, node, perl, ruby,
+  deno, bun, lua, php, awk, gawk, mawk, nawk) is at least `write.remote`,
+  like `REMOTE_PROGRAMS`, in user-authored manifests and proposals alike.

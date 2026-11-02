@@ -8,7 +8,7 @@
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::command::Command;
+use crate::command::{ArgvElement, Command};
 use crate::digest::{ManifestDigest, canonical_json, feed};
 use crate::error::ManifestError;
 use crate::manifest::{Manifest, command_json, parse_table};
@@ -42,9 +42,15 @@ impl CommandProposal {
     /// Parse the body of `[commands.<name>]` (a TOML table) as an addition
     /// to `base`. Refuses a name already present and anything the
     /// resulting manifest would fail on. An agent wrote it, so it is held
-    /// to more than a manifest: `argv[0]` may not be a wrapper program
-    /// ([`crate::WRAPPER_PROGRAMS`]), and `env` may only name variables in
-    /// [`crate::PROPOSAL_ENV_ALLOW`] (none in v0.1).
+    /// to more than a manifest (fail closed):
+    /// - `argv[0]` must be exactly the `argv[0]` of a command already in
+    ///   `base` (every command there is user-authored or user-approved);
+    /// - no argv literal holds a [`crate::PROPOSAL_FORBIDDEN_CHARS`] character;
+    /// - no placeholder comes after a [`crate::CODE_FLAGS`] literal;
+    /// - `options_ok`, `allow_option` and `allow_path_escape` stay false
+    ///   (ADR-1122: an agent cannot widen authority);
+    /// - `env` names only variables in [`crate::PROPOSAL_ENV_ALLOW`] (none
+    ///   in v0.1).
     pub fn parse(base: &Manifest, name: &str, toml: &str) -> Result<Self, ManifestError> {
         let path = format!("commands.{name}");
         let table = parse_table(toml)?;
@@ -60,6 +66,22 @@ impl CommandProposal {
             command,
         };
         proposal.revised(base)?;
+        // Fail closed: the program must be one the user already runs in
+        // this manifest, written the same way (a different path is a
+        // different binary).
+        let program = match proposal.command.argv.first() {
+            Some(ArgvElement::Literal(p)) => p,
+            _ => unreachable!("argv[0] of a validated command is a literal"),
+        };
+        let approved = base
+            .commands
+            .values()
+            .any(|c| matches!(c.argv.first(), Some(ArgvElement::Literal(p)) if p == program));
+        if !approved {
+            return Err(ManifestError::invalid(format!(
+                "{path}.argv[0]: {program:?} is not the program of a command in the base manifest; the user adds new programs"
+            )));
+        }
         Ok(proposal)
     }
     /// The digest of the manifest it extends.

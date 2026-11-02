@@ -17,8 +17,8 @@ use crate::manifest::{
 };
 use crate::pattern::{compile_pattern, is_forbidden_char};
 use crate::schema::{
-    ActionClass, MCP_CALL, NEVER_PROGRAMS, PROPOSAL_ENV_ALLOW, RUN_COMMAND, WRAPPER_PROGRAMS,
-    is_denied_env, is_never, is_schema_verb, program_matches,
+    ActionClass, MCP_CALL, NEVER_PROGRAMS, PROPOSAL_ENV_ALLOW, PROPOSAL_FORBIDDEN_CHARS,
+    RUN_COMMAND, is_code_flag, is_denied_env, is_never, is_schema_verb, program_matches,
 };
 
 type Result<T> = std::result::Result<T, ManifestError>;
@@ -794,6 +794,59 @@ fn param(path: &str, p: RawParam, command_arg: bool) -> Result<Param> {
     Ok(out)
 }
 
+/// What an agent proposal may not do beyond the manifest rules: put a
+/// quote or shell metacharacter in a literal, place an argument after a
+/// code-taking flag, or widen authority with `allow_option`,
+/// `allow_path_escape` or `options_ok` (ADR-1122: only the user grants
+/// those).
+fn agent_rules(
+    path: &str,
+    argv: &[ArgvElement],
+    args: &BTreeMap<String, Param>,
+    options_ok: Option<bool>,
+) -> Result<()> {
+    let mut code_flag: Option<&str> = None;
+    for (i, el) in argv.iter().enumerate() {
+        match el {
+            ArgvElement::Literal(s) => {
+                if let Some(c) = s.chars().find(|c| PROPOSAL_FORBIDDEN_CHARS.contains(c)) {
+                    return invalid(format!(
+                        "{path}.argv[{i}]: {c:?} is a quote or shell metacharacter; a proposal cannot use one"
+                    ));
+                }
+                if code_flag.is_none() && is_code_flag(s) {
+                    code_flag = Some(s);
+                }
+            }
+            ArgvElement::Placeholder(n) => {
+                if let Some(flag) = code_flag {
+                    return invalid(format!(
+                        "{path}.argv[{i}]: placeholder {{{n}}} follows the code-taking flag {flag:?}; a proposal cannot pass code"
+                    ));
+                }
+            }
+        }
+    }
+    if options_ok == Some(true) {
+        return invalid(format!(
+            "{path}.options_ok: a proposal cannot set it to true"
+        ));
+    }
+    for (name, p) in args {
+        for (field, set) in [
+            ("allow_option", p.allow_option()),
+            ("allow_path_escape", p.allow_path_escape()),
+        ] {
+            if set {
+                return invalid(format!(
+                    "{path}.args.{name}.{field}: a proposal cannot set it to true"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn command(name: &str, c: RawCommand, origin: Origin) -> Result<Command> {
     let path = format!("commands.{name}");
     if !is_id(name) {
@@ -849,13 +902,8 @@ pub(crate) fn command(name: &str, c: RawCommand, origin: Origin) -> Result<Comma
         return invalid(format!("{path}.args.{unused}: unused in argv"));
     }
     check_programs(&path, &argv)?;
-    if origin == Origin::Agent
-        && let Some(ArgvElement::Literal(prog)) = argv.first()
-        && program_matches(WRAPPER_PROGRAMS, prog)
-    {
-        return invalid(format!(
-            "{path}.argv[0]: {prog:?} is a wrapper program; a proposal cannot use one"
-        ));
+    if origin == Origin::Agent {
+        agent_rules(&path, &argv, &args, c.options_ok)?;
     }
     let options_ok = c.options_ok.unwrap_or(false);
     if !options_ok

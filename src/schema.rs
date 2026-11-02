@@ -121,14 +121,60 @@ pub const REMOTE_PROGRAMS: &[&str] = &[
 ];
 
 /// Programs that run another program, or code, given as an argument:
-/// shells, interpreters, privilege and process wrappers. An agent proposal
-/// may not use one as `argv[0]`; in a user-authored manifest they are a
-/// lint warning ([`crate::Manifest::lints`]). An entry ending in `*`
-/// matches by prefix.
+/// shells, interpreters, privilege and process wrappers. They are a lint
+/// warning ([`crate::Manifest::lints`]) and make the Never and class checks
+/// look at every later word. An agent proposal is bounded otherwise: its
+/// `argv[0]` must already be the program of a user-authored command (see
+/// [`crate::CommandProposal::parse`]). An entry ending in `*` matches by
+/// prefix.
 pub const WRAPPER_PROGRAMS: &[&str] = &[
     "sh", "bash", "zsh", "dash", "ksh", "mksh", "fish", "csh", "tcsh", "env", "xargs", "find",
     "nohup", "timeout", "nice", "sudo", "doas", "su", "busybox", "python*", "node", "perl", "ruby",
 ];
+
+/// Shells and interpreters: whatever code they are given can reach the
+/// network with the module's credentials, so a command whose program
+/// (`argv[0]`, or a literal word behind a wrapper) is one of them is at
+/// least class `write.remote`, like [`REMOTE_PROGRAMS`]. An entry ending in
+/// `*` matches by prefix.
+pub const INTERPRETER_PROGRAMS: &[&str] = &[
+    "sh", "bash", "zsh", "dash", "ksh", "mksh", "fish", "csh", "tcsh", "busybox", "python*",
+    "node", "perl", "ruby", "deno", "bun", "lua", "php", "awk", "gawk", "mawk", "nawk",
+];
+
+/// Flags after which an argument is code, not data: `sh -c`, `perl -e`,
+/// `node --eval`, `find -exec`, `xargs`-style `-x`. In an agent proposal no
+/// placeholder may come after one of them (also written `--flag=...`).
+pub const CODE_FLAGS: &[&str] = &[
+    "-c",
+    "-e",
+    "-E",
+    "--eval",
+    "--command",
+    "--exec",
+    "-exec",
+    "-execdir",
+    "-ok",
+    "-okdir",
+    "-x",
+];
+
+/// Characters an agent proposal may not put in an argv literal: quotes,
+/// backslash and the shell metacharacters for expansion, globbing,
+/// comments, history, sequencing, pipes and redirection. No shell runs the
+/// argv, but a user-approved shell or interpreter in `argv[0]` would read
+/// them.
+pub const PROPOSAL_FORBIDDEN_CHARS: &[char] = &[
+    '\'', '"', '\\', '$', '`', ';', '|', '&', '<', '>', '(', ')', '*', '?', '[', ']', '{', '}',
+    '~', '#', '!',
+];
+
+/// True when the argv literal is a [`CODE_FLAGS`] entry, alone or as
+/// `flag=value`.
+pub fn is_code_flag(literal: &str) -> bool {
+    let flag = literal.split_once('=').map_or(literal, |(f, _)| f);
+    CODE_FLAGS.contains(&flag)
+}
 
 /// Environment variable names no command may set: they change which code
 /// runs (loader, interpreter, tool wrappers, search paths, shell start-up).

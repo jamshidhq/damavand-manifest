@@ -39,7 +39,8 @@ pub use manifest::{
 };
 pub use revision::{CommandProposal, PROPOSAL_DOMAIN, ProposalDigest};
 pub use schema::{
-    ActionClass, DENIED_ENV, MCP_CALL, NEVER_ACTIONS, NEVER_PROGRAMS, PROPOSAL_ENV_ALLOW,
-    REMOTE_PROGRAMS, RUN_COMMAND, SCHEMA_VERBS, WRAPPER_PROGRAMS, glob_matches, is_denied_env,
-    program_basename, program_matches,
+    ActionClass, CODE_FLAGS, DENIED_ENV, INTERPRETER_PROGRAMS, MCP_CALL, NEVER_ACTIONS,
+    NEVER_PROGRAMS, PROPOSAL_ENV_ALLOW, PROPOSAL_FORBIDDEN_CHARS, REMOTE_PROGRAMS, RUN_COMMAND,
+    SCHEMA_VERBS, WRAPPER_PROGRAMS, glob_matches, is_code_flag, is_denied_env, program_basename,
+    program_matches,
 };

@@ -9,7 +9,8 @@ use serde_json::{Map, Value};
 use crate::error::ManifestError;
 use crate::manifest::{Param, ParamType};
 use crate::schema::{
-    ActionClass, NEVER_PROGRAMS, REMOTE_PROGRAMS, WRAPPER_PROGRAMS, program_matches,
+    ActionClass, INTERPRETER_PROGRAMS, NEVER_PROGRAMS, REMOTE_PROGRAMS, WRAPPER_PROGRAMS,
+    program_matches,
 };
 
 /// The words of an argv that name a program: `argv[0]`, and when `argv[0]`
@@ -42,10 +43,13 @@ pub(crate) fn literals(argv: &[ArgvElement]) -> impl Iterator<Item = &str> {
 }
 
 /// The class of a command run with these program words: `write.remote`
-/// when one is a [`REMOTE_PROGRAMS`] entry, else `run_command`'s
-/// `write.worktree`.
+/// when one is a [`REMOTE_PROGRAMS`] or [`INTERPRETER_PROGRAMS`] entry, else
+/// `run_command`'s `write.worktree`.
 fn class_of(words: &[&str]) -> ActionClass {
-    if words.iter().any(|w| program_matches(REMOTE_PROGRAMS, w)) {
+    if words
+        .iter()
+        .any(|w| program_matches(REMOTE_PROGRAMS, w) || program_matches(INTERPRETER_PROGRAMS, w))
+    {
         ActionClass::WriteRemote
     } else {
         ActionClass::WriteWorktree
@@ -137,7 +141,7 @@ impl Command {
     }
     /// The action class policy checks this command as: `write.remote` when
     /// its program (`argv[0]`, or a literal word behind a wrapper) is in
-    /// [`REMOTE_PROGRAMS`], else `write.worktree` (the class of
+    /// [`REMOTE_PROGRAMS`] or [`INTERPRETER_PROGRAMS`], else `write.worktree` (the class of
     /// `run_command`). Derived from argv, never written in the manifest, so
     /// it cannot be set lower. Argument values can only raise it: see
     /// [`ResolvedArgv::class`].

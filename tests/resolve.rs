@@ -408,3 +408,53 @@ fn args_from_json_str_refuses_duplicate_keys() {
         assert_eq!(e.code(), wire::codes::ARGS_INVALID, "{bad}");
     }
 }
+
+#[test]
+fn shells_and_interpreters_are_at_least_write_remote() {
+    for prog in [
+        "sh",
+        "bash",
+        "/bin/zsh",
+        "dash",
+        "fish",
+        "busybox",
+        "python3",
+        "python3.12",
+        "node",
+        "perl",
+        "ruby",
+        "deno",
+        "bun",
+        "lua",
+        "lua5.4",
+        "php",
+        "awk",
+        "gawk",
+    ] {
+        let m = parse(&with(&format!(
+            "\n[commands.c]\nargv = [\"{prog}\", \"x\"]\ntimeout_secs = 1\n"
+        )));
+        let c = m.command("c").unwrap();
+        assert_eq!(c.class(), ActionClass::WriteRemote, "{prog}");
+        assert_eq!(
+            c.resolve(&Args::new()).unwrap().class,
+            ActionClass::WriteRemote,
+            "{prog}"
+        );
+    }
+    // Behind a wrapper too.
+    let m = parse(&with(
+        "\n[commands.c]\nargv = [\"nice\", \"python3\", \"x.py\"]\ntimeout_secs = 1\n",
+    ));
+    assert_eq!(m.command("c").unwrap().class(), ActionClass::WriteRemote);
+    for prog in ["cargo", "make", "shellcheck", "nodemon", "rubocop"] {
+        let m = parse(&with(&format!(
+            "\n[commands.c]\nargv = [\"{prog}\", \"x\"]\ntimeout_secs = 1\n"
+        )));
+        assert_eq!(
+            m.command("c").unwrap().class(),
+            ActionClass::WriteWorktree,
+            "{prog}"
+        );
+    }
+}

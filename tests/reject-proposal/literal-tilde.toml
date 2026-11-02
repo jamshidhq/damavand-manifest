@@ -1,0 +1,3 @@
+# expect: 2000 shell metacharacter
+argv = ["cargo", "~/x"]
+timeout_secs = 1
