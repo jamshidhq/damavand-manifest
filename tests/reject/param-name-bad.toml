@@ -1,0 +1,11 @@
+# expect: 2000 params
+schema = 1
+id = "m"
+kind = "connector"
+
+[[tools]]
+id = "t"
+upstream = "t"
+class = "read"
+[tools.params."P-1"]
+type = "string"

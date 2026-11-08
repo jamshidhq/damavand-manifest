@@ -1,0 +1,10 @@
+# expect: 2000 duplicate
+schema = 1
+id = "m"
+kind = "connector"
+
+[[egress]]
+host = "api.example.com"
+
+[[egress]]
+host = "api.example.com"

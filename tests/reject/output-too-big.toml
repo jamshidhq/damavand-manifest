@@ -1,0 +1,9 @@
+# expect: 2000 max_output_bytes
+schema = 1
+id = "m"
+kind = "connector"
+
+[commands.c]
+argv = ["x"]
+timeout_secs = 1
+max_output_bytes = 67108865

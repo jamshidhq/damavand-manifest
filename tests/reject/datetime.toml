@@ -1,0 +1,5 @@
+# expect: 2000 id2: datetime values
+schema = 1
+id = "m"
+kind = "connector"
+id2 = 1979-05-27T07:32:00Z

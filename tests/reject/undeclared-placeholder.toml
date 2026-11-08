@@ -1,0 +1,8 @@
+# expect: 2000 undeclared
+schema = 1
+id = "m"
+kind = "connector"
+
+[commands.c]
+argv = ["x", "--", "{p}"]
+timeout_secs = 1

@@ -1,0 +1,6 @@
+# expect: 2000 missing field
+schema = 1
+id = "m"
+kind = "project"
+
+[verbs.j_edit.x]

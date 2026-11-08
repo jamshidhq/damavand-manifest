@@ -1,0 +1,115 @@
+# A project manifest that uses every section.
+schema = 1
+id = "jamshid"
+kind = "project"
+audit = "full"
+
+[identity]
+aws_role = "arn:aws:iam::123456789012:role/jamshid-reader"
+
+[autonomy]
+"write.remote" = 1
+egress = 2
+
+[[egress]]
+host = "api.github.com"
+
+[[egress]]
+host = "crates.io"
+port = 443
+
+[[egress]]
+host = "static.crates.io"
+port = 8443
+
+[[secrets]]
+name = "github_token"
+host = "api.github.com"
+header = "Authorization"
+scheme = "Bearer"
+
+[[secrets]]
+name = "crates_token"
+host = "crates.io"
+header = "X-Token"
+
+[[tools]]
+id = "gh.issue_read"
+upstream = "get_issue"
+class = "read"
+
+[tools.params.number]
+type = "integer"
+required = true
+min = 1
+max = 1000000
+
+[tools.params.repo]
+type = "string"
+required = true
+max_len = 100
+constraint = { pattern = "[a-z0-9_.-]+/[a-z0-9_.-]+" }
+
+[tools.params.state]
+type = "string"
+constraint = { enum = ["open", "closed"] }
+
+[[tools]]
+id = "gh.comment"
+upstream = "add_issue_comment"
+class = "write.remote"
+
+[tools.params.body]
+type = "string"
+required = true
+max_len = 4000
+
+[tools.params.draft]
+type = "boolean"
+
+[verbs.j_edit.mode]
+constraint = { enum = ["replace", "append"] }
+
+[verbs.j_edit.path]
+constraint = { pattern = "[a-z0-9/._-]+" }
+
+[commands.test]
+argv = ["cargo", "test", "--workspace", "--", "{filter}"]
+cwd = "."
+env = { RUST_BACKTRACE = "1" }
+output = "failures-only"
+timeout_secs = 900
+max_output_bytes = 1048576
+
+[commands.test.args.filter]
+type = "string"
+max_len = 200
+constraint = { pattern = "[a-z0-9_:]+" }
+
+[commands.fmt]
+argv = ["cargo", "fmt", "--check"]
+timeout_secs = 60
+
+[commands.bench]
+argv = ["cargo", "bench", "{offset}", "--", "{name}", "{jobs}", "{quick}"]
+cwd = "crates/core"
+timeout_secs = 3600
+options_ok = true
+
+[commands.bench.args.offset]
+type = "integer"
+min = -10
+max = 10
+allow_option = true
+
+[commands.bench.args.name]
+type = "string"
+required = true
+
+[commands.bench.args.jobs]
+type = "integer"
+min = 1
+max = 64
+
+[commands.bench.args.quick]
+type = "boolean"

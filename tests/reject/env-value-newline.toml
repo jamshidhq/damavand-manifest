@@ -1,0 +1,9 @@
+# expect: 2000 control or format character U+000A
+schema = 1
+id = "m"
+kind = "connector"
+
+[commands.c]
+argv = ["x"]
+timeout_secs = 1
+env = { A = "1\nB=2" }

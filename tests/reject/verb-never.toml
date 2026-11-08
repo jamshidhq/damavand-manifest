@@ -1,0 +1,7 @@
+# expect: 2000 Never action
+schema = 1
+id = "m"
+kind = "project"
+
+[verbs.terraform_apply.dir]
+constraint = { enum = ["prod"] }

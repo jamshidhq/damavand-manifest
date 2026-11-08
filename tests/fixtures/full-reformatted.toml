@@ -1,0 +1,72 @@
+# The same manifest as full.toml: other key order, other list order,
+# defaults spelled out or left out, inline and dotted tables, comments.
+kind = "project"
+id = "jamshid"
+schema = 1
+
+commands.fmt = { argv = ["cargo", "fmt", "--check"], timeout_secs = 60, cwd = ".", output = "full" }
+
+[autonomy]
+egress = 2 # lowered
+"write.remote" = 1
+
+[verbs.j_edit]
+path = { constraint = { pattern = "[a-z0-9/._-]+" } }
+mode.constraint.enum = ["append", "replace"]
+
+[[secrets]]
+header = "X-Token"
+host = "crates.io"
+name = "crates_token"
+
+[[secrets]]
+scheme = "Bearer"
+header = "Authorization"
+host = "api.github.com"
+name = "github_token"
+
+[[tools]]
+class = "write.remote"
+upstream = "add_issue_comment"
+id = "gh.comment"
+params.draft = { type = "boolean", required = false }
+params.body = { type = "string", max_len = 4000, required = true }
+
+[[tools]]
+upstream = "get_issue"
+id = "gh.issue_read"
+class = "read"
+params.state = { type = "string", constraint = { enum = ["closed", "open"] }, max_len = 4096 }
+params.repo = { required = true, type = "string", constraint = { pattern = "[a-z0-9_.-]+/[a-z0-9_.-]+" }, max_len = 100 }
+params.number = { min = 1, max = 1000000, type = "integer", required = true }
+
+[[egress]]
+host = "static.crates.io"
+port = 8443
+
+[[egress]]
+port = 443
+host = "crates.io"
+
+[[egress]]
+host = "api.github.com"
+
+[identity]
+aws_role = "arn:aws:iam::123456789012:role/jamshid-reader"
+
+[commands.bench]
+options_ok = true
+timeout_secs = 3600
+cwd = "crates/core"
+argv = ["cargo", "bench", "{offset}", "--", "{name}", "{jobs}", "{quick}"]
+args.quick = { type = "boolean" }
+args.jobs = { type = "integer", min = 1, max = 64, allow_option = false }
+args.name = { type = "string", required = true }
+args.offset = { type = "integer", min = -10, max = 10, allow_option = true }
+
+[commands.test]
+timeout_secs = 900
+output = "failures-only"
+env.RUST_BACKTRACE = "1"
+argv = ["cargo", "test", "--workspace", "--", "{filter}"]
+args.filter = { constraint = { pattern = "[a-z0-9_:]+" }, max_len = 200, type = "string" }

@@ -1,0 +1,9 @@
+# expect: 2000 Never action
+schema = 1
+id = "m"
+kind = "connector"
+
+[[tools]]
+id = "tofu_destroy"
+upstream = "destroy"
+class = "read"

@@ -1,0 +1,10 @@
+# expect: 2000 duplicate key
+schema = 1
+id = "m"
+kind = "connector"
+[commands.c]
+argv = ["x"]
+timeout_secs = 1
+[commands.c]
+argv = ["y"]
+timeout_secs = 1

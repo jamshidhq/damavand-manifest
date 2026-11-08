@@ -1,0 +1,8 @@
+# expect: 2000 non-ASCII character U+0441
+schema = 1
+id = "m"
+kind = "connector"
+
+[commands.c]
+argv = ["\u0441at"]
+timeout_secs = 1

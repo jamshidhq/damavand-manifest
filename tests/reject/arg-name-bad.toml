@@ -1,0 +1,10 @@
+# expect: 2000 args
+schema = 1
+id = "m"
+kind = "connector"
+
+[commands.c]
+argv = ["x", "--", "{a-b}"]
+timeout_secs = 1
+[commands.c.args."a-b"]
+type = "string"

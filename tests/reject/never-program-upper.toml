@@ -1,0 +1,8 @@
+# expect: 2000 is a Never program
+schema = 1
+id = "m"
+kind = "connector"
+
+[commands.c]
+argv = ["TERRAFORM", "apply"]
+timeout_secs = 1

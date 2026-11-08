@@ -1,0 +1,14 @@
+# expect: 2000 duplicate
+schema = 1
+id = "m"
+kind = "connector"
+
+[[tools]]
+id = "t"
+upstream = "t"
+class = "read"
+
+[[tools]]
+id = "t"
+upstream = "t"
+class = "read"

@@ -1,0 +1,10 @@
+# expect: 2000 placeholder
+schema = 1
+id = "m"
+kind = "connector"
+
+[commands.c]
+argv = ["x", "--", "--filter={p}"]
+timeout_secs = 1
+[commands.c.args.p]
+type = "string"

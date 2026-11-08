@@ -1,0 +1,9 @@
+# expect: 2000 is a denied environment variable
+schema = 1
+id = "m"
+kind = "connector"
+
+[commands.c]
+argv = ["x"]
+timeout_secs = 1
+env = { NODE_OPTIONS = "1" }

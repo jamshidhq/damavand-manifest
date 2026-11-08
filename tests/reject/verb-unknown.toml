@@ -1,0 +1,7 @@
+# expect: 2000 unknown verb
+schema = 1
+id = "m"
+kind = "project"
+
+[verbs.j_frobnicate.x]
+constraint = { enum = ["a"] }
