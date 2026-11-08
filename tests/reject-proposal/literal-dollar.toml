@@ -1,3 +1,0 @@
-# expect: 2000 shell metacharacter
-argv = ["cargo", "$HOME"]
-timeout_secs = 1

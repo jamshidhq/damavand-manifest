@@ -120,8 +120,9 @@ fn dash_values_are_refused_unless_allowed() {
     );
     assert_eq!(r.cwd, "crates/core");
     assert!(r.env.is_empty());
-    // Unconstrained values (free text, integers, booleans) are never cleared.
-    assert_eq!(r.uncleared, argv(&["jobs", "name", "offset", "quick"]));
+    // jobs (1..=64) and offset (-10..=10) declare min and max, so they
+    // clear; free text and a boolean without an allowed list do not.
+    assert_eq!(r.uncleared, argv(&["name", "quick"]));
 }
 
 #[test]
@@ -483,4 +484,130 @@ fn env_values_cannot_set_variables() {
             .resolve(&Args::new().with("p", "a=b"))
             .is_ok()
     );
+}
+
+const INTEGERS: &str = r#"
+[commands.c]
+argv = ["x", "--", "{both}", "{lo}", "{hi}", "{none}", "{wide}"]
+timeout_secs = 1
+args.both = { type = "integer", min = 1, max = 64 }
+args.lo = { type = "integer", min = 1 }
+args.hi = { type = "integer", max = 64 }
+args.none = { type = "integer" }
+args.wide = { type = "integer", min = -9007199254740991, max = 9007199254740991 }
+"#;
+
+#[test]
+fn integer_args_clear_taint_only_inside_a_declared_min_and_max() {
+    let m = parse(&with(INTEGERS));
+    let c = m.command("c").unwrap();
+    for v in ["1", "32", "64"] {
+        let r = c
+            .resolve(
+                &Args::new()
+                    .with("both", v)
+                    .with("lo", v)
+                    .with("hi", v)
+                    .with("none", v)
+                    .with("wide", v),
+            )
+            .unwrap();
+        // Only `both` declares min AND max; a bound at the safe-integer
+        // limit (`wide`) is no bound.
+        assert_eq!(r.uncleared, argv(&["hi", "lo", "none", "wide"]), "{v}");
+    }
+    // Out of range is refused, as before.
+    for v in ["0", "65"] {
+        let e = args_err(c.resolve(&Args::new().with("both", v)));
+        assert!(e.contains("both"), "{v}: {e}");
+    }
+    // The policy engine sees the same: only `both` has a clearing constraint.
+    let keys: Vec<String> = m.constraints().map(|(k, _)| format!("{k:?}")).collect();
+    assert_eq!(
+        keys,
+        vec![r#"Command { command: "c", arg: "both" }"#.to_string()]
+    );
+}
+
+const ALLOWED: &str = r#"
+[commands.c]
+argv = ["x", "--", "{n}", "{b}", "{free}", "{flag}"]
+timeout_secs = 1
+args.n = { type = "integer", allowed = [8, 2, 4] }
+args.b = { type = "boolean", allowed = [false] }
+args.free = { type = "boolean" }
+args.flag = { type = "boolean", allowed = [true, false] }
+"#;
+
+#[test]
+fn allowed_lists_clear_integers_and_booleans() {
+    let m = parse(&with(ALLOWED));
+    let c = m.command("c").unwrap();
+    let run = |n: &str, b: &str| {
+        c.resolve(
+            &Args::new()
+                .with("n", n)
+                .with("b", b)
+                .with("free", b)
+                .with("flag", b),
+        )
+        .unwrap()
+        .uncleared
+    };
+    assert_eq!(run("4", "false"), argv(&["free"]));
+    // Not in the list: kept and tainted, like a string outside its enum.
+    assert_eq!(run("3", "true"), argv(&["b", "free", "n"]));
+    // A boolean without a list never clears.
+    assert_eq!(run("2", "true"), argv(&["b", "free"]));
+}
+
+#[test]
+fn integer_and_boolean_taint_survives_the_canonical_round_trip() {
+    for text in [with(INTEGERS), with(ALLOWED), fixture("fixtures/full.toml")] {
+        let a = parse(&text);
+        let b = damavand_manifest::Manifest::from_canonical_json(&a.canonical_json()).unwrap();
+        assert_eq!(a, b);
+        let keys = |m: &damavand_manifest::Manifest| {
+            m.constraints()
+                .map(|(k, c)| format!("{k:?} {c:?}"))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(keys(&a), keys(&b));
+    }
+    let canonical = String::from_utf8(parse(&with(ALLOWED)).canonical_json()).unwrap();
+    assert!(canonical.contains(r#""allowed":[2,4,8]"#), "{canonical}");
+    assert!(
+        canonical.contains(r#""allowed":[false,true]"#),
+        "{canonical}"
+    );
+}
+
+#[test]
+fn integer_and_boolean_constraints_clear_what_policy_checks() {
+    // Policy calls `clears` on the raw value, without the shape check.
+    let m = parse(&with(INTEGERS));
+    let (_, both) = m.constraints().next().unwrap();
+    for v in ["1", "64"] {
+        assert!(both.clears(v), "{v}");
+    }
+    for v in ["0", "65", "-1", "01", "+1", "1.0", "", "x"] {
+        assert!(!both.clears(v), "{v}");
+    }
+    let m = parse(&with(ALLOWED));
+    let get = |arg: &str| {
+        m.constraints()
+            .find(|(k, _)| format!("{k:?}").contains(&format!("arg: {arg:?}")))
+            .map(|(_, c)| c.clone())
+    };
+    let n = get("n").unwrap();
+    assert!(n.clears("2") && n.clears("8"));
+    for v in ["3", "02", "", "two"] {
+        assert!(!n.clears(v), "{v}");
+    }
+    let b = get("b").unwrap();
+    assert!(b.clears("false"));
+    for v in ["true", "False", "0", ""] {
+        assert!(!b.clears(v), "{v}");
+    }
+    assert!(get("free").is_none());
 }

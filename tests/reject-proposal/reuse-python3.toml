@@ -1,4 +1,0 @@
-# expect: 2000 is a wrapper or interpreter program
-# base-argv: ["python3", "tools/gen.py"]
-argv = ["python3", "tools/other.py"]
-timeout_secs = 1

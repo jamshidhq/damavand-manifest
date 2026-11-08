@@ -206,16 +206,41 @@ pub enum Constraint {
     Enum(Vec<String>),
     /// The whole value matches this pattern.
     Pattern(Pattern),
+    /// An integer command argument whose `min` and `max` are both narrower
+    /// than ±(2^53 - 1): a decimal integer in `min..=max`. Derived from
+    /// `min` and `max`, never written in a manifest.
+    IntegerRange {
+        /// Smallest value.
+        min: i64,
+        /// Largest value.
+        max: i64,
+    },
+    /// An integer command argument's `allowed` list (sorted, no
+    /// duplicates): one of these decimal integers.
+    Integers(Vec<i64>),
+    /// A boolean command argument's `allowed` list (sorted, no
+    /// duplicates): `true` or `false`, when listed.
+    Booleans(Vec<bool>),
 }
 
 impl Constraint {
     /// True when the value satisfies the constraint. An empty value never
-    /// does.
+    /// does. Integers must be in canonical decimal text (`7`, not `07`).
     pub fn clears(&self, value: &str) -> bool {
+        let integer = || value.parse::<i64>().ok().filter(|n| n.to_string() == value);
         !value.is_empty()
             && match self {
                 Constraint::Enum(values) => values.iter().any(|v| v == value),
                 Constraint::Pattern(p) => p.is_match(value),
+                Constraint::IntegerRange { min, max } => {
+                    integer().is_some_and(|n| (*min..=*max).contains(&n))
+                }
+                Constraint::Integers(values) => integer().is_some_and(|n| values.contains(&n)),
+                Constraint::Booleans(values) => match value {
+                    "true" => values.contains(&true),
+                    "false" => values.contains(&false),
+                    _ => false,
+                },
             }
     }
 }
@@ -256,7 +281,9 @@ pub struct Param {
     pub(crate) min: Option<i64>,
     /// Integer only.
     pub(crate) max: Option<i64>,
-    /// String only.
+    /// Strings: the authored `constraint`. Integer and boolean command
+    /// arguments: the `allowed` list, or for integers the range when `min`
+    /// and `max` are both declared.
     pub(crate) constraint: Option<Constraint>,
     /// Command arguments only.
     pub(crate) allow_option: Option<bool>,
@@ -351,7 +378,8 @@ impl Tool {
                 Some(Constraint::Pattern(pat)) => {
                     prop.insert("pattern".into(), format!("^(?:{})$", pat.source).into());
                 }
-                None => {}
+                // The others are for command arguments only.
+                _ => {}
             }
             props.insert(name.clone(), Value::Object(prop));
         }
@@ -665,10 +693,9 @@ impl Manifest {
 
     /// Warnings about rules a user-authored manifest may break on purpose,
     /// for the reviewer: commands that run a wrapper program
-    /// ([`WRAPPER_PROGRAMS`]: a proposal may not), and tools of class
-    /// `read`. A tool's class is the author's assertion, reviewed in git; an
-    /// agent never sets it, since proposals never touch tools. Each warning
-    /// starts with the path of the field.
+    /// ([`WRAPPER_PROGRAMS`]), and tools of class `read`. A tool's class is
+    /// the author's assertion, reviewed in git. Each warning starts with the
+    /// path of the field.
     pub fn lints(&self) -> Vec<String> {
         let wrappers = self.commands.iter().filter_map(|(name, c)| match c.argv.first() {
             Some(ArgvElement::Literal(prog)) if program_matches(WRAPPER_PROGRAMS, prog) => {
@@ -693,7 +720,7 @@ impl Manifest {
 }
 
 /// Parse TOML text into a table, refusing files over the size limit.
-pub(crate) fn parse_table(text: &str) -> Result<toml::Table, ManifestError> {
+fn parse_table(text: &str) -> Result<toml::Table, ManifestError> {
     if text.len() > limits::MAX_FILE_BYTES {
         return Err(ManifestError::invalid(format!(
             "file is larger than 256 KiB ({} bytes)",
@@ -704,10 +731,12 @@ pub(crate) fn parse_table(text: &str) -> Result<toml::Table, ManifestError> {
         .map_err(|e: toml::de::Error| ManifestError::invalid(format!("TOML: {}", e.message())))
 }
 
+/// A verb constraint: always an enum or a pattern.
 fn constraint_json(c: &Constraint) -> Value {
     match c {
         Constraint::Enum(values) => json!({ "enum": values }),
         Constraint::Pattern(p) => json!({ "pattern": p.source }),
+        _ => unreachable!("a verb constraint is an enum or a pattern"),
     }
 }
 
@@ -724,8 +753,18 @@ fn param_json(p: &Param) -> Value {
     if let Some(n) = p.max {
         m.insert("max".into(), n.into());
     }
-    if let Some(c) = &p.constraint {
-        m.insert("constraint".into(), constraint_json(c));
+    match &p.constraint {
+        Some(c @ (Constraint::Enum(_) | Constraint::Pattern(_))) => {
+            m.insert("constraint".into(), constraint_json(c));
+        }
+        Some(Constraint::Integers(values)) => {
+            m.insert("allowed".into(), values.clone().into());
+        }
+        Some(Constraint::Booleans(values)) => {
+            m.insert("allowed".into(), values.clone().into());
+        }
+        // Derived from `min` and `max`, which are written.
+        Some(Constraint::IntegerRange { .. }) | None => {}
     }
     if let Some(d) = p.allow_option {
         m.insert("allow_option".into(), d.into());
@@ -746,7 +785,7 @@ fn params_json(params: &BTreeMap<String, Param>) -> Value {
 }
 
 /// The canonical JSON value of one command.
-pub(crate) fn command_json(c: &Command) -> Value {
+fn command_json(c: &Command) -> Value {
     let argv: Vec<String> = c
         .argv
         .iter()

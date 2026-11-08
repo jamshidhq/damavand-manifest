@@ -25,7 +25,7 @@ use damavand_manifest::{Args, Manifest};
 let m = Manifest::parse_toml(&text)?; // strict; refuses anything unsafe
 let digest = m.digest();              // SHA-256 over RFC 8785 JSON
 for (key, constraint) in m.constraints() {
-    // (verb | tool | command, parameter) -> enum or pattern that clears taint
+    // (verb | tool | command, parameter) -> the constraint that clears taint
 }
 let run = m.resolve("test", &Args::new().with("filter", "parse::limits"))?;
 // run.argv, run.cwd, run.env, run.timeout_secs; no shell.
@@ -81,8 +81,9 @@ args.filter = { type = "string", max_len = 200, constraint = { pattern = "[a-z0-
 | --- | --- |
 | Parsing | Unknown fields, duplicate keys, floats, datetimes and integers beyond ±(2^53 - 1) are refused. |
 | Limits | 256 KiB per file, 4 KiB per string or key, 256 tools, 64 parameters per tool, command or verb, 128 commands, 64 argv elements, 64 egress entries, 32 secrets, 64 env variables, 256 enum values. |
-| Classes | A manifest sets a class only for its own tools; an omitted class is `write.remote`, so `read` is always written out (and listed by `lints`). The class is the author's assertion, reviewed in git; proposals never touch tools. `never`, schema verbs and Never actions are refused as tool ids; a verb never takes a class. A command's class is derived: `write.remote` when its program is in `REMOTE_PROGRAMS` (kubectl, helm, aws, ...) or `INTERPRETER_PROGRAMS` (shells, python, node, ...), else `write.worktree`. |
+| Classes | A manifest sets a class only for its own tools; an omitted class is `write.remote`, so `read` is always written out (and listed by `lints`). The class is the author's assertion, reviewed in git. `never`, schema verbs and Never actions are refused as tool ids; a verb never takes a class. A command's class is derived: `write.remote` when its program is in `REMOTE_PROGRAMS` (kubectl, helm, aws, ...) or `INTERPRETER_PROGRAMS` (shells, python, node, ...), else `write.worktree`. |
 | Constraints | One non-empty enum or one pattern. Patterns go through `pattern::compile_pattern` (anchored; refused if they can match the empty string, a character in `Cc`, `Cf`, `Zl` or `Zp`, or a shell metacharacter). An empty value never clears. Only a constraint clears taint. |
+| Integer and boolean arguments | Command arguments only. An integer clears taint when its `allowed` list holds it, or, without a list, when it declares both `min` and `max` narrower than ±(2^53 - 1) (a bound at that limit is no bound). A boolean clears only when its `allowed` list holds it; without one it stays tainted. `allowed` is 1-256 values of the argument's type, no duplicates, integers inside `min..=max`. A value outside `min..=max` is refused; a value outside `allowed` is kept and stays tainted. Tool parameters keep the v0.1 rule: only a string constraint clears. |
 | Commands | argv only, no shell. `argv[0]` is a literal and never a Never program (`NEVER_PROGRAMS`, also behind a wrapper such as `env` or `sh -c`). A placeholder fills a whole element; an absent optional argument deletes its element. `--` must come before the first placeholder unless `options_ok = true`. A value starting with `-`, `@` or `+` is refused unless the argument has `allow_option = true`; an absolute path or a `..` segment unless it has `allow_path_escape = true`. argv literals, env values and `cwd` are printable ASCII. Fixed env without the names in `DENIED_ENV` (`LD_*`, `PATH`, `GIT_*`, ...), relative `cwd` without `..`. |
 | Audit | `metadata` only when every tool is class `read` and there are no commands, verbs or secrets. |
 
@@ -97,29 +98,19 @@ refuses bytes that are not exactly the canonical form.
 
 ## Missing commands
 
-An agent never runs a command the manifest lacks. It can propose one:
-`CommandProposal::parse` validates the addition against the base manifest,
-`diff` renders it for the user (one field per line, every string quoted,
-anything outside printable ASCII escaped as `\u{XXXX}`), and after the user
-approves, the core calls `apply` (refused if the base moved on) and commits
-the result as a user-authored revision with a new digest. A proposal is held to more than
-a manifest, fail closed: its `argv[0]` must be the `argv[0]` of a command
-already in the base manifest and never a wrapper or interpreter
-(`WRAPPER_PROGRAMS`, `INTERPRETER_PROGRAMS`); no placeholder follows a `CODE_FLAGS` literal
-(`-c`, `-e`, `--eval`, ...); literals hold no quote or shell metacharacter;
-it cannot set `allow_option`, `allow_path_escape` or `options_ok`; and it
-sets no `env`.
+An agent never runs a command the manifest lacks, and in v0.1 it cannot
+propose one: the user adds commands in a reviewed change. See
+[docs/design.md](docs/design.md), section 9, review round 4.
 
 ## Wire (damavand-proto)
 
 Capability `manifest` (`{"digests": [...]}`); methods `manifest/get`,
-`manifest/list`, `manifest/validate` (no store write), `manifest/propose`
-(pending, never active); error codes 2000-2005 (`wire::codes`). Until this
+`manifest/list`, `manifest/validate` (no store write); error codes 2000-2005 (`wire::codes`). Until this
 crate depends on damavand-proto, the names live in the `wire` module.
 
 ## Not yet in the crate
 
-- The manifest store, the approval flow and the `manifest/*` server.
+- The manifest store and the `manifest/*` server.
 - A schema N-1: schema 1 is the first version, so `migrate` passes it
   through and every other version is refused (2005).
 

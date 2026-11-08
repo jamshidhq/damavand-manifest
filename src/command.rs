@@ -217,8 +217,8 @@ impl Command {
 }
 
 /// Check one value against its argument's shape. `Ok(true)` when its
-/// constraint clears it. Integer and boolean values never clear taint in
-/// v0.1 (they carry no constraint); the owner decides whether they should.
+/// constraint clears it: a string's `constraint`, an integer's or a
+/// boolean's `allowed` list, or an integer's declared `min` and `max`.
 fn check_value(name: &str, p: &Param, value: &str) -> Result<bool, ManifestError> {
     let bad = |why: String| Err(ManifestError::args(format!("argument {name:?}: {why}")));
     if value.contains('\0') {
@@ -250,13 +250,13 @@ fn check_value(name: &str, p: &Param, value: &str) -> Result<bool, ManifestError
             if n < min || n > max {
                 return bad(format!("{n} is outside {min}..={max}"));
             }
-            Ok(false)
+            Ok(p.constraint().is_some_and(|c| c.clears(value)))
         }
         ParamType::Boolean => {
             if value != "true" && value != "false" {
                 return bad("not true or false".into());
             }
-            Ok(false)
+            Ok(p.constraint().is_some_and(|c| c.clears(value)))
         }
     }
 }

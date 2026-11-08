@@ -1,3 +1,0 @@
-# expect: 2000 is a wrapper or interpreter program
-argv = ["python3", "x.py"]
-timeout_secs = 1

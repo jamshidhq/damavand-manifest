@@ -1,4 +1,0 @@
-# expect: 2000 is a wrapper or interpreter program
-# base-argv: ["nice", "cargo", "build"]
-argv = ["nice", "cargo", "test"]
-timeout_secs = 1

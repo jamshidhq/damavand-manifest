@@ -1,4 +1,0 @@
-# expect: 2000 not on the proposal allow list
-argv = ["cargo", "test"]
-timeout_secs = 1
-env = { RUST_BACKTRACE = "1" }

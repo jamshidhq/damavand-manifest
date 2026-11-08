@@ -17,9 +17,8 @@ use crate::manifest::{
 };
 use crate::pattern::{compile_pattern, is_forbidden_char};
 use crate::schema::{
-    ActionClass, INTERPRETER_PROGRAMS, MCP_CALL, NEVER_PROGRAMS, PROPOSAL_ENV_ALLOW,
-    PROPOSAL_FORBIDDEN_CHARS, RUN_COMMAND, WRAPPER_PROGRAMS, is_code_flag, is_denied_env, is_never,
-    is_schema_verb, program_matches,
+    ActionClass, MCP_CALL, NEVER_PROGRAMS, RUN_COMMAND, is_denied_env, is_never, is_schema_verb,
+    program_matches,
 };
 
 type Result<T> = std::result::Result<T, ManifestError>;
@@ -109,11 +108,12 @@ struct RawParam {
     constraint: Option<RawConstraint>,
     allow_option: Option<bool>,
     allow_path_escape: Option<bool>,
+    allowed: Option<Vec<Value>>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct RawCommand {
+struct RawCommand {
     argv: Vec<String>,
     cwd: Option<String>,
     #[serde(default)]
@@ -233,14 +233,6 @@ fn check_plain(path: &str, what: &str, s: &str) -> Result<()> {
         }
     }
     Ok(())
-}
-
-/// Who wrote a command: the user (a reviewed manifest) or an agent (a
-/// [`crate::CommandProposal`]). Agent commands follow stricter rules.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Origin {
-    User,
-    Agent,
 }
 
 /// Refuse a command that runs a Never program, directly or behind a
@@ -371,12 +363,6 @@ pub(crate) fn raw_from_json(v: Value) -> Result<RawManifest> {
     serde_json::from_value(v).map_err(|e| ManifestError::invalid(e.to_string()))
 }
 
-pub(crate) fn raw_command_from_toml(table: toml::Table) -> Result<RawCommand> {
-    toml::Value::Table(table)
-        .try_into()
-        .map_err(|e: toml::de::Error| ManifestError::invalid(e.message().to_string()))
-}
-
 // ------------------------------------------------------------- validation
 
 pub(crate) fn validate(raw: RawManifest) -> Result<Manifest> {
@@ -405,7 +391,7 @@ pub(crate) fn validate(raw: RawManifest) -> Result<Manifest> {
     }
     let mut commands = BTreeMap::new();
     for (name, c) in raw.commands {
-        let cmd = command(&name, c, Origin::User)?;
+        let cmd = command(&name, c)?;
         commands.insert(name, cmd);
     }
     let m = Manifest {
@@ -424,7 +410,7 @@ pub(crate) fn validate(raw: RawManifest) -> Result<Manifest> {
     Ok(m)
 }
 
-/// Rules over the whole manifest, also run on every revision.
+/// Rules over the whole manifest.
 pub(crate) fn cross_check(m: &Manifest) -> Result<()> {
     if m.commands.len() > limits::MAX_COMMANDS {
         return invalid(format!(
@@ -733,6 +719,9 @@ fn param(path: &str, p: RawParam, command_arg: bool) -> Result<Param> {
     };
     let allow_option = command_only("allow_option", p.allow_option)?;
     let allow_path_escape = command_only("allow_path_escape", p.allow_path_escape)?;
+    if !command_arg && p.allowed.is_some() {
+        return invalid(format!("{path}.allowed: only for command arguments"));
+    }
     let mut out = Param {
         ty: p.ty,
         required: p.required.unwrap_or(false),
@@ -750,6 +739,9 @@ fn param(path: &str, p: RawParam, command_arg: bool) -> Result<Param> {
             }
             if p.max.is_some() {
                 return not_for("max", p.ty);
+            }
+            if p.allowed.is_some() {
+                return not_for("allowed", p.ty);
             }
             let max_len = p.max_len.unwrap_or(limits::MAX_STRING_BYTES as i64);
             if !(1..=limits::MAX_STRING_BYTES as i64).contains(&max_len) {
@@ -778,6 +770,22 @@ fn param(path: &str, p: RawParam, command_arg: bool) -> Result<Param> {
             }
             out.min = Some(min);
             out.max = Some(max);
+            out.constraint = match p.allowed {
+                Some(items) => {
+                    let values = allowed(path, &items, |v| match v.as_i64() {
+                        Some(n) if (min..=max).contains(&n) => Ok(n),
+                        Some(n) => Err(format!("{n} is outside {min}..={max}")),
+                        None => Err("not an integer".into()),
+                    })?;
+                    Some(Constraint::Integers(values))
+                }
+                // A bound at the ±(2^53 - 1) default is no bound, whether
+                // written or not: the canonical form cannot tell them apart.
+                None if command_arg && min > -MAX_SAFE_INTEGER && max < MAX_SAFE_INTEGER => {
+                    Some(Constraint::IntegerRange { min, max })
+                }
+                None => None,
+            };
         }
         ParamType::Boolean => {
             for (field, set) in [
@@ -790,73 +798,50 @@ fn param(path: &str, p: RawParam, command_arg: bool) -> Result<Param> {
                     return not_for(field, p.ty);
                 }
             }
+            if let Some(items) = p.allowed {
+                let values = allowed(path, &items, |v| {
+                    v.as_bool().ok_or_else(|| "not a boolean".into())
+                })?;
+                out.constraint = Some(Constraint::Booleans(values));
+            }
         }
     }
     Ok(out)
 }
 
-/// What an agent proposal may not do beyond the manifest rules: run a
-/// wrapper or interpreter (even one a user command runs), put a
-/// quote or shell metacharacter in a literal, place an argument after a
-/// code-taking flag, or widen authority with `allow_option`,
-/// `allow_path_escape` or `options_ok` (ADR-1122: only the user grants
-/// those).
-fn agent_rules(
+/// An `allowed` list: 1-[`limits::MAX_ENUM`] values, each read by `item`,
+/// without duplicates. Returned sorted.
+fn allowed<T: Ord>(
     path: &str,
-    argv: &[ArgvElement],
-    args: &BTreeMap<String, Param>,
-    options_ok: Option<bool>,
-) -> Result<()> {
-    if let Some(ArgvElement::Literal(prog)) = argv.first()
-        && (program_matches(WRAPPER_PROGRAMS, prog) || program_matches(INTERPRETER_PROGRAMS, prog))
-    {
+    items: &[Value],
+    item: impl Fn(&Value) -> std::result::Result<T, String>,
+) -> Result<Vec<T>> {
+    if items.is_empty() {
+        return invalid(format!("{path}.allowed: empty"));
+    }
+    if items.len() > limits::MAX_ENUM {
         return invalid(format!(
-            "{path}.argv[0]: {prog:?} is a wrapper or interpreter program; a proposal cannot run one, even one the user runs"
+            "{path}.allowed: more than {} values",
+            limits::MAX_ENUM
         ));
     }
-    let mut code_flag: Option<&str> = None;
-    for (i, el) in argv.iter().enumerate() {
-        match el {
-            ArgvElement::Literal(s) => {
-                if let Some(c) = s.chars().find(|c| PROPOSAL_FORBIDDEN_CHARS.contains(c)) {
-                    return invalid(format!(
-                        "{path}.argv[{i}]: {c:?} is a quote or shell metacharacter; a proposal cannot use one"
-                    ));
-                }
-                if code_flag.is_none() && is_code_flag(s) {
-                    code_flag = Some(s);
-                }
-            }
-            ArgvElement::Placeholder(n) => {
-                if let Some(flag) = code_flag {
-                    return invalid(format!(
-                        "{path}.argv[{i}]: placeholder {{{n}}} follows the code-taking flag {flag:?}; a proposal cannot pass code"
-                    ));
-                }
-            }
+    let mut values = Vec::with_capacity(items.len());
+    for (i, v) in items.iter().enumerate() {
+        match item(v) {
+            Ok(x) => values.push(x),
+            Err(why) => return invalid(format!("{path}.allowed[{i}]: {why}")),
         }
     }
-    if options_ok == Some(true) {
-        return invalid(format!(
-            "{path}.options_ok: a proposal cannot set it to true"
-        ));
+    values.sort();
+    let before = values.len();
+    values.dedup();
+    if values.len() != before {
+        return invalid(format!("{path}.allowed: duplicate value"));
     }
-    for (name, p) in args {
-        for (field, set) in [
-            ("allow_option", p.allow_option()),
-            ("allow_path_escape", p.allow_path_escape()),
-        ] {
-            if set {
-                return invalid(format!(
-                    "{path}.args.{name}.{field}: a proposal cannot set it to true"
-                ));
-            }
-        }
-    }
-    Ok(())
+    Ok(values)
 }
 
-pub(crate) fn command(name: &str, c: RawCommand, origin: Origin) -> Result<Command> {
+fn command(name: &str, c: RawCommand) -> Result<Command> {
     let path = format!("commands.{name}");
     if !is_id(name) {
         return invalid(format!("{path}: name is not [a-z][a-z0-9_.]*"));
@@ -911,9 +896,6 @@ pub(crate) fn command(name: &str, c: RawCommand, origin: Origin) -> Result<Comma
         return invalid(format!("{path}.args.{unused}: unused in argv"));
     }
     check_programs(&path, &argv)?;
-    if origin == Origin::Agent {
-        agent_rules(&path, &argv, &args, c.options_ok)?;
-    }
     let options_ok = c.options_ok.unwrap_or(false);
     if !options_ok
         && let Some(first) = argv
@@ -954,11 +936,6 @@ pub(crate) fn command(name: &str, c: RawCommand, origin: Origin) -> Result<Comma
         }
         if is_denied_env(k) {
             return invalid(format!("{epath}: {k} is a denied environment variable"));
-        }
-        if origin == Origin::Agent && !PROPOSAL_ENV_ALLOW.contains(&k.as_str()) {
-            return invalid(format!(
-                "{epath}: {k} is not on the proposal allow list (a proposal sets no env)"
-            ));
         }
         check_plain(&epath, "env value", v)?;
     }
@@ -1055,7 +1032,7 @@ mod tests {
     #[test]
     fn cross_check_refuses_a_never_program_however_the_command_got_in() {
         // Every parser runs `command` first; cross_check is the second
-        // wall, for a manifest assembled any other way (a revision).
+        // wall, for a manifest assembled any other way.
         let text = "schema = 1\nid = \"m\"\nkind = \"connector\"\n[commands.c]\nargv = [\"x\"]\ntimeout_secs = 1\n";
         let mut m = Manifest::parse_toml(text).unwrap();
         assert!(cross_check(&m).is_ok());

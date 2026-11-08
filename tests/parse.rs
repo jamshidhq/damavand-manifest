@@ -157,6 +157,15 @@ fn constraints_are_keyed_by_what_they_clear() {
                 tool: "gh.issue_read",
                 param: "state"
             },
+            // Integer arguments with a declared min and max.
+            ConstraintKey::Command {
+                command: "bench",
+                arg: "jobs"
+            },
+            ConstraintKey::Command {
+                command: "bench",
+                arg: "offset"
+            },
             ConstraintKey::Command {
                 command: "test",
                 arg: "filter"
@@ -596,18 +605,8 @@ fn error_codes() {
     );
     assert_eq!(wire::CAPABILITY, "manifest");
     assert_eq!(
-        [
-            wire::METHOD_GET,
-            wire::METHOD_LIST,
-            wire::METHOD_VALIDATE,
-            wire::METHOD_PROPOSE
-        ],
-        [
-            "manifest/get",
-            "manifest/list",
-            "manifest/validate",
-            "manifest/propose"
-        ]
+        [wire::METHOD_GET, wire::METHOD_LIST, wire::METHOD_VALIDATE],
+        ["manifest/get", "manifest/list", "manifest/validate"]
     );
 }
 
@@ -768,4 +767,77 @@ fn lints_name_wrappers_and_read_tools() {
         lints[0].starts_with("tools.gh.issue_read.class"),
         "{lints:?}"
     );
+}
+
+#[test]
+fn allowed_lists_are_command_only_typed_and_bounded() {
+    let cmd = |arg: &str| {
+        with(&format!(
+            "[commands.c]\nargv = [\"x\", \"--\", \"{{a}}\"]\ntimeout_secs = 1\nargs.a = {arg}\n"
+        ))
+    };
+    for (arg, want) in [
+        (
+            r#"{ type = "string", allowed = ["x"] }"#,
+            "commands.c.args.a.allowed: not allowed for type string",
+        ),
+        (
+            r#"{ type = "integer", allowed = [] }"#,
+            "commands.c.args.a.allowed: empty",
+        ),
+        (
+            r#"{ type = "integer", allowed = [1, 1] }"#,
+            "commands.c.args.a.allowed: duplicate value",
+        ),
+        (
+            r#"{ type = "integer", allowed = ["1"] }"#,
+            "commands.c.args.a.allowed[0]: not an integer",
+        ),
+        (
+            r#"{ type = "integer", allowed = [true] }"#,
+            "commands.c.args.a.allowed[0]: not an integer",
+        ),
+        (
+            r#"{ type = "integer", min = 1, max = 5, allowed = [3, 6] }"#,
+            "commands.c.args.a.allowed[1]: 6 is outside 1..=5",
+        ),
+        (
+            r#"{ type = "boolean", allowed = [1] }"#,
+            "commands.c.args.a.allowed[0]: not a boolean",
+        ),
+        (
+            r#"{ type = "boolean", allowed = [true, true] }"#,
+            "commands.c.args.a.allowed: duplicate value",
+        ),
+    ] {
+        let e = refuse(&cmd(arg));
+        assert!(e.contains(want), "{arg}: {e}");
+    }
+    let many: Vec<String> = (0..=limits::MAX_ENUM).map(|i| i.to_string()).collect();
+    let e = refuse(&cmd(&format!(
+        "{{ type = \"integer\", allowed = [{}] }}",
+        many.join(", ")
+    )));
+    assert!(e.contains("commands.c.args.a.allowed: more than"), "{e}");
+    // Tool parameters keep v0.1 taint rules: no allowed list.
+    let e = refuse(&with(
+        "[[tools]]\nid = \"t\"\nupstream = \"t\"\nclass = \"read\"\nparams.p = { type = \"boolean\", allowed = [true] }\n",
+    ));
+    assert!(
+        e.contains("tools[0].params.p.allowed: only for command arguments"),
+        "{e}"
+    );
+}
+
+#[test]
+fn tool_integer_params_with_bounds_still_carry_no_constraint() {
+    // Taint clearing by range is for command arguments only.
+    let m = full();
+    assert!(!m.constraints().any(|(k, _)| matches!(
+        k,
+        ConstraintKey::Tool {
+            param: "number",
+            ..
+        }
+    )));
 }

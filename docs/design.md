@@ -34,7 +34,7 @@ in section 8.
 
 **Tool:** `id` (grammar), `upstream` (the real MCP name, any printable ASCII, max 128 bytes), `class` (ActionClass; omitted means `write.remote`), `params`.
 
-**Param:** `type` (`string`, `integer`, `boolean`), `required`, shape limits (`max_len`, `min`, `max`), and an optional `constraint` (`enum` or `pattern`). Shape rejects bad values before policy. Only `constraint` clears taint, so free text stays tainted. The crate generates MCP JSON Schema (`additionalProperties: false`); authors never write it.
+**Param:** `type` (`string`, `integer`, `boolean`), `required`, shape limits (`max_len`, `min`, `max`), and an optional `constraint` (`enum` or `pattern`). Shape rejects bad values before policy. Only `constraint` clears taint, so free text stays tainted. (v0.1: integer and boolean command arguments also clear inside a declared bound; see section 9, review round 4.) The crate generates MCP JSON Schema (`additionalProperties: false`); authors never write it.
 
 **Class rules:** the manifest sets a class only for `mcp_call` tools, never for a schema verb. The loader refuses `class = never` and tool ids that collide with a schema verb or `NEVER_ACTIONS`.
 
@@ -106,7 +106,7 @@ impl Command { pub fn resolve(&self, args: &Args) -> Result<ResolvedArgv, Manife
 #[non_exhaustive] pub enum Kind { Project, Connector, Source, Loop, Executor }
 ```
 
-Fields private, enums `#[non_exhaustive]`. Wire: capability `manifest` `{"digests": [...]}`; `manifest/get`, `manifest/list`, `manifest/validate` (no store write), `manifest/propose` (pending, never active).
+Fields private, enums `#[non_exhaustive]`. Wire: capability `manifest` `{"digests": [...]}`; `manifest/get`, `manifest/list`, `manifest/validate` (no store write). (`manifest/propose` is out of v0.1; see section 9, review round 4.)
 
 | Code | Name |
 |---|---|
@@ -131,11 +131,10 @@ Follow-up: register codes in proto `error-codes.md` and its consts test.
 
 The owner accepted every recommendation of the open questions.
 
-1. **Missing-command approval.** The user approves a diff; the core commits
-   it as a user-authored manifest revision with a new digest. An agent never
-   gets a one-shot run. The crate provides the proposal type, its diff, its
-   digest and the validation (`CommandProposal`); the approval flow stays in
-   the core.
+1. **Missing-command approval.** An agent never gets a one-shot run. The
+   accepted design was an agent proposal the user approves as a diff; it
+   is out of v0.1 (section 9, review round 4). The user adds commands in a
+   reviewed change.
 2. **Format.** TOML, not YAML.
 3. **Pattern safety.** It moves from damavand-policy into this crate
    (public module `pattern`) and policy depends on manifest. Until policy
@@ -166,8 +165,8 @@ Where the code is stricter than, or fills a gap in, sections 0-7:
   option-like values without `allow_option`, path escapes without
   `allow_path_escape`. A value its constraint does not clear is
   kept and listed in `ResolvedArgv::uncleared`, for policy to escalate.
-  Integer and boolean arguments carry no constraint, so they are always
-  uncleared.
+  Integer and boolean arguments clear only inside a declared bound
+  (review round 4).
 - **Extra limits and grammars.** 64 parameters per verb, 64 env variables
   per command, 256 enum values, `max_output_bytes` at most 64 MiB (default
   1 MiB), integers within ±(2^53 - 1) (exact in RFC 8785), env names
@@ -182,9 +181,6 @@ Where the code is stricter than, or fills a gap in, sections 0-7:
 - **Verb names.** `run_command` and `mcp_call` are refused under `verbs`:
   command arguments and tool parameters are constrained where they are
   declared.
-- **Proposal digest.** `CommandProposal::digest` is SHA-256 over
-  `damavand-manifest/proposal/v1`, the base digest, the name and the
-  command's canonical JSON, so an approval binds to one exact proposal.
 - **No-weakening test.** `tests/no_weakening.rs` re-implements the policy
   constraint check (no policy dependency) and requires the same constraints
   and the same taint result for every parameter in the copied `cases.yaml`,
@@ -196,14 +192,14 @@ Where the code is stricter than, or fills a gap in, sections 0-7:
 ### Review round 1 (PR #1)
 
 Rules added after the adversarial review of PR #1. Each refusal has
-corpus entries in `tests/reject/` (manifests) or `tests/reject-proposal/`
-(agent proposals).
+corpus entries in `tests/reject/`. Rules for agent proposals were removed
+with proposals in round 4.
 
 - **Never programs.** `NEVER_PROGRAMS` (one const in `schema.rs`:
   terraform, tofu, terragrunt, tfp, pulumi, cdk, cdktf, sam) holds the
   infrastructure apply tools that are Never by owner rule. A command whose
-  `argv[0]` basename names one is refused at load, in `cross_check` (every
-  revision) and so in `CommandProposal::parse`. The match is on the
+  `argv[0]` basename names one is refused at load, and again in
+  `cross_check`. The match is on the
   lowercased basename, also with a variant suffix (`-1.9`, `_v2`, `.exe`)
   or a bare version of digits and dots (`3`, `1.5`). When `argv[0]` is a wrapper program, every word
   of every later literal is checked too, so `env A=1 tofu apply` and
@@ -228,22 +224,12 @@ corpus entries in `tests/reject/` (manifests) or `tests/reject-proposal/`
   Unicode `Cf`, `Zl` and `Zp` (via `pattern::is_forbidden_char`), and in
   v0.1 any non-ASCII character. Env names already follow
   `[A-Z_][A-Z0-9_]*`.
-- **Proposal diff.** `CommandProposal::diff` no longer uses
-  `toml::to_string`. A custom renderer writes one field per line
-  (`argv[0] = "cargo"`, `env."K" = "v"`, `args."a".max_len = 200`), quotes
-  every string, escapes `"` and `\` with `\` and everything outside
-  printable ASCII as `\u{XXXX}`, and quotes a key unless it is
-  `[a-z0-9_]+`. The derived class is shown as a comment line. The diff is
-  therefore not TOML (`\u{XXXX}` is Rust syntax); a proptest reads it back
-  and requires exactly the argv template, env and cwd that `resolve` and
-  the digest use.
 - **Denied env names.** `DENIED_ENV` (`LD_*`, `DYLD_*`, `PATH`,
   `BASH_ENV`, `ENV`, `*_OPTIONS`, `GIT_*`, `RUSTC`, `RUSTC_WRAPPER`,
   `CARGO_*_RUNNER`, `CARGO_BUILD_*`, `RUSTFLAGS`, `PYTHON*`, `NODE_*`,
   `PERL5*`, `IFS`, `SHELLOPTS`, plus `RUSTC_WORKSPACE_WRAPPER`, `RUSTDOC`,
   `RUSTDOCFLAGS`, `CARGO_ENCODED_RUSTFLAGS`, `CARGO_*_LINKER`, `BASHOPTS`)
-  is refused in every command. A proposal may set only names in
-  `PROPOSAL_ENV_ALLOW`, which is empty: a proposal sets no env.
+  is refused in every command.
 - **Option injection.** `allow_dash` is renamed `allow_option` (0.x,
   unpublished, so no serde alias: one spelling). Values starting with `@`
   (response files) or `+` (rustup toolchains, `+opt`) are refused like `-`.
@@ -256,14 +242,12 @@ corpus entries in `tests/reject/` (manifests) or `tests/reject-proposal/`
   an argument.
 - **Tool class floor.** `class` may be omitted and then means
   `write.remote`; `read` must be written out. The class is the author's
-  assertion, reviewed in git; agents cannot set it (ADR-1122), since
-  proposals never touch tools. `Manifest::lints` lists every `read` tool.
+  assertion, reviewed in git; agents cannot set it (ADR-1122). `Manifest::lints` lists every `read` tool.
 - **Wrapper programs.** `WRAPPER_PROGRAMS` (shells, `env`, `xargs`,
   `find`, `nohup`, `timeout`, `nice`, `sudo`, `doas`, `su`, `busybox`,
   `python*`, `node`, `perl`, `ruby`) is a warning from `Manifest::lints` in
   a user-authored manifest, and makes the Never and class checks read every
-  later word. It is a partial list, so it is not what bounds proposals
-  (round 2).
+  later word. It is a partial list: a lint, not a boundary.
 - **Secrets bind (host, port).** A secret has a `port` (default 443) and
   (`host`, `port`) must be an egress entry, so a secret for port 443 is
   never sent to another port of the same host.
@@ -272,47 +256,62 @@ corpus entries in `tests/reject/` (manifests) or `tests/reject-proposal/`
   kept the last duplicate, so it cannot refuse them.
 - **Not done here.** A `cwd` symlink that leaves the worktree is the
   executor's job (`openat2` with `RESOLVE_BENEATH`); the crate checks text
-  only. Integer and boolean arguments never clear taint in v0.1; the owner
-  decides whether they should.
+  only.
 
 ### Review round 2 (PR #1)
 
-A denylist of programs fails open (ksh, awk, make, `git -c`, ssh, ...),
-and splitting literals into words is not a boundary for a shell or an
-interpreter. Proposals are therefore bounded fail-closed:
-
-- **Approved program only.** A `CommandProposal`'s `argv[0]` must be
-  exactly the `argv[0]` of a command already in the base manifest (all of
-  which the user wrote or approved). The match is on the whole string, not
-  only the basename: `/tmp/x/cargo` is a different binary from `cargo`.
-  Anything else is refused; the user adds new programs in a reviewed change.
-- **No code from arguments.** No placeholder may come after a literal in
-  `CODE_FLAGS` (`-c`, `-e`, `-E`, `--eval`, `--command`, `--exec`, `-exec`,
-  `-execdir`, `-ok`, `-okdir`, `-x`; also as `--flag=value`). One const,
-  in `schema.rs`.
-- **No metacharacters in literals.** A proposal's argv literals may not
-  hold any of `PROPOSAL_FORBIDDEN_CHARS`: single and double quote,
-  backslash, backtick, and `$ ; | & < > ( ) * ? [ ] { } ~ # !`.
-- **No widening (ADR-1122).** A proposal cannot set `allow_option`,
-  `allow_path_escape` or `options_ok` to true; only a user-authored
-  manifest may.
 - **Shells and interpreters are a class floor.** A command whose program
   (`argv[0]`, or a literal word behind a wrapper) is in
   `INTERPRETER_PROGRAMS` (the shells, busybox, `python*`, node, perl, ruby,
   deno, bun, lua, php, awk, gawk, mawk, nawk) is at least `write.remote`,
-  like `REMOTE_PROGRAMS`, in user-authored manifests and proposals alike.
+  like `REMOTE_PROGRAMS`.
+
+The other rules of rounds 2 and 3 bounded agent proposals and were removed
+with them (round 4).
 
 ### Review round 3 (PR #1)
 
-- **No wrapper or interpreter in a proposal.** Approval of a program is
-  not enough when the program runs code it is given: a proposal's
-  `argv[0]` must be the `argv[0]` of a base command AND not in
-  `WRAPPER_PROGRAMS` or `INTERPRETER_PROGRAMS`. Both must hold.
-- **Code flags, defence in depth.** `CODE_FLAGS` also holds `-p`, `-r`,
-  `--print` and the word `eval`, and any single-dash cluster of letters
-  holding one of `CODE_FLAG_LETTERS` (`c e E x r p`, so `-xc`, `-ec`,
-  `-Ec`) counts as a code flag. This over-refuses (`-Dwarnings`, `-rf`):
-  a proposal then cannot put a placeholder after such a literal, and the
-  user writes that command instead.
 - **`env` values.** When `argv[0]` is `env`, `resolve` refuses an argument
   value holding `=`: through `env` it would set a variable.
+
+### Review round 4 (PR #1): owner rulings
+
+- **Agent command proposals are out of v0.1.** `CommandProposal`, its
+  diff and digest, `manifest/propose`, the proposal-only rules and
+  constants (`CODE_FLAGS`, `CODE_FLAG_LETTERS`, `is_code_flag`,
+  `PROPOSAL_FORBIDDEN_CHARS`, `PROPOSAL_ENV_ALLOW`) and the proposal corpus
+  are removed. Why: after three rounds of fail-closed rules, a delta
+  security review still found bypasses (`npx terraform apply`,
+  `docker run hashicorp/terraform`, `git push --force` classed
+  `write.worktree`, `git -c core.fsmonitor=...`,
+  `cargo --config build.rustc-wrapper=...`, `make -f x.mk`, `npm exec`,
+  literal paths such as `cat ~/.ssh/id_ed25519`). Vetting an
+  agent-written argv cannot be made sound here: the executor sandbox is
+  the boundary, and the manifest must not pretend to be one. A future
+  form must be narrowing-only: it may only take authority away from a
+  command the user already wrote (fewer argument values, a smaller
+  timeout), never add a program, a literal, an argument or an env
+  variable. Every rule for user-authored manifests is unchanged (the
+  rejection corpus gives the same result on every file before and after).
+  The `-p`/`-r` over-refusal was in `is_code_flag` only, so it is gone.
+- **Integer and boolean arguments clear taint inside a declared bound.**
+  Command arguments only; tool parameters and verbs keep the rule that
+  only a string constraint clears.
+  - Integer: cleared when its `allowed` list holds the value, or, without
+    a list, when both `min` and `max` are narrower than ±(2^53 - 1). A
+    bound at that limit is no bound, whether written or not: the
+    canonical form fills the default, so it cannot tell the two apart,
+    and the stricter reading keeps TOML and canonical JSON equal
+    (`Constraint::IntegerRange`, derived, not in the canonical form).
+  - Boolean: cleared only when its `allowed` list holds the value
+    (`Constraint::Booleans`). A boolean without a list stays tainted.
+    (The looser option, a boolean always safe once declared, was not
+    taken.)
+  - `allowed`: 1-256 values of the argument's type, no duplicates,
+    integers inside `min..=max`; sorted in the canonical form, and
+    written there only when present, so existing digests do not change.
+    `constraint` stays refused on integers and booleans.
+  - A value outside `min..=max` is refused (2003), as before; a value
+    outside `allowed` is kept and stays tainted, like a string outside its
+    enum. `Manifest::constraints` lists the new constraints, so policy
+    and `ResolvedArgv::uncleared` agree.

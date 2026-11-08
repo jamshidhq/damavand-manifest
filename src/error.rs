@@ -3,11 +3,11 @@
 use crate::digest::ManifestDigest;
 use crate::wire::codes;
 
-/// Why a manifest, a proposal or a command call is refused.
+/// Why a manifest or a command call is refused.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ManifestError {
-    /// The manifest (or a proposal) breaks a rule. `message` starts with the
+    /// The manifest breaks a rule. `message` starts with the
     /// path of the offending field.
     Invalid {
         /// What is wrong, and where.

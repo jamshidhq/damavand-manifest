@@ -1,4 +1,0 @@
-# expect: 2000 follows the code-taking flag
-argv = ["cargo", "-ec", "--", "{s}"]
-timeout_secs = 1
-args.s = { type = "string" }

@@ -1,4 +1,0 @@
-# expect: 2000 is a wrapper or interpreter program
-# base-argv: ["node", "x.js"]
-argv = ["node", "y.js"]
-timeout_secs = 1

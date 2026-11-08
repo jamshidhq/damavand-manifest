@@ -16,14 +16,10 @@ pub const METHOD_GET: &str = "manifest/get";
 pub const METHOD_LIST: &str = "manifest/list";
 /// Validate a manifest text. Never writes to the store.
 pub const METHOD_VALIDATE: &str = "manifest/validate";
-/// Propose a change (a missing command). The result is pending, never
-/// active: only the core, after the user approves the diff, commits it as a
-/// user-authored revision.
-pub const METHOD_PROPOSE: &str = "manifest/propose";
 
 /// Wire error codes (block 2000-2999).
 pub mod codes {
-    /// The manifest or proposal breaks a rule.
+    /// The manifest breaks a rule.
     pub const MANIFEST_INVALID: i64 = 2000;
     /// No manifest with this id.
     pub const UNKNOWN_MANIFEST: i64 = 2001;

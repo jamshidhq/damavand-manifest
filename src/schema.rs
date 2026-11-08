@@ -123,11 +123,7 @@ pub const REMOTE_PROGRAMS: &[&str] = &[
 /// Programs that run another program, or code, given as an argument:
 /// shells, interpreters, privilege and process wrappers. They are a lint
 /// warning ([`crate::Manifest::lints`]) and make the Never and class checks
-/// look at every later word. An agent proposal is bounded otherwise: its
-/// `argv[0]` must already be the program of a user-authored command (see
-/// [`crate::CommandProposal::parse`]) and never one of these or of
-/// [`INTERPRETER_PROGRAMS`]. An entry ending in `*` matches by
-/// prefix.
+/// look at every later word. An entry ending in `*` matches by prefix.
 pub const WRAPPER_PROGRAMS: &[&str] = &[
     "sh", "bash", "zsh", "dash", "ksh", "mksh", "fish", "csh", "tcsh", "env", "xargs", "find",
     "nohup", "timeout", "nice", "sudo", "doas", "su", "busybox", "python*", "node", "perl", "ruby",
@@ -142,60 +138,6 @@ pub const INTERPRETER_PROGRAMS: &[&str] = &[
     "sh", "bash", "zsh", "dash", "ksh", "mksh", "fish", "csh", "tcsh", "busybox", "python*",
     "node", "perl", "ruby", "deno", "bun", "lua", "php", "awk", "gawk", "mawk", "nawk",
 ];
-
-/// Flags after which an argument is code, not data: `sh -c`, `perl -e`,
-/// `node --eval`, `find -exec`, `xargs`-style `-x`. In an agent proposal no
-/// placeholder may come after one of them (also written `--flag=...`).
-pub const CODE_FLAGS: &[&str] = &[
-    "-c",
-    "-e",
-    "-E",
-    "--eval",
-    "--command",
-    "--exec",
-    "-exec",
-    "-execdir",
-    "-ok",
-    "-okdir",
-    "-x",
-    "-p",
-    "-r",
-    "--print",
-    "eval",
-];
-
-/// Letters that make a single-dash option cluster (`-xc`, `-ec`, `-Ec`)
-/// a code flag: one of them may be the flag that takes code.
-pub const CODE_FLAG_LETTERS: &[char] = &['c', 'e', 'E', 'x', 'r', 'p'];
-
-/// Characters an agent proposal may not put in an argv literal: quotes,
-/// backslash and the shell metacharacters for expansion, globbing,
-/// comments, history, sequencing, pipes and redirection. No shell runs the
-/// argv, but a user-approved shell or interpreter in `argv[0]` would read
-/// them.
-pub const PROPOSAL_FORBIDDEN_CHARS: &[char] = &[
-    '\'', '"', '\\', '$', '`', ';', '|', '&', '<', '>', '(', ')', '*', '?', '[', ']', '{', '}',
-    '~', '#', '!',
-];
-
-/// True when the argv literal is a [`CODE_FLAGS`] entry, alone or as
-/// `flag=value`, or a single-dash cluster of letters holding one of
-/// [`CODE_FLAG_LETTERS`] (`-xc`). This over-refuses (`-Dwarnings` holds an
-/// `r`): it is defence in depth behind the rule that a proposal never runs
-/// a wrapper or interpreter.
-pub fn is_code_flag(literal: &str) -> bool {
-    let flag = literal.split_once('=').map_or(literal, |(f, _)| f);
-    if CODE_FLAGS.contains(&flag) {
-        return true;
-    }
-    match flag.strip_prefix('-') {
-        // `--long` is not a cluster: its second `-` is not a letter.
-        Some(cluster) => {
-            cluster.chars().all(|c| c.is_ascii_alphabetic()) && cluster.contains(CODE_FLAG_LETTERS)
-        }
-        _ => false,
-    }
-}
 
 /// Environment variable names no command may set: they change which code
 /// runs (loader, interpreter, tool wrappers, search paths, shell start-up).
@@ -227,10 +169,6 @@ pub const DENIED_ENV: &[&str] = &[
     "IFS",
     "SHELLOPTS",
 ];
-
-/// Environment variables an agent proposal may set. Empty: a proposal
-/// carries no `env` at all; the user adds variables in a reviewed change.
-pub const PROPOSAL_ENV_ALLOW: &[&str] = &[];
 
 /// `s` matches `pat`, where one `*` in `pat` stands for any run of
 /// characters, the empty run included.
@@ -416,6 +354,5 @@ mod tests {
         for w in REMOTE_PROGRAMS {
             assert!(!program_matches(NEVER_PROGRAMS, w), "{w}");
         }
-        assert!(PROPOSAL_ENV_ALLOW.is_empty());
     }
 }
