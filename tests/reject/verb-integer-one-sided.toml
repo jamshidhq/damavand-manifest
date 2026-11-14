@@ -1,0 +1,8 @@
+# expect: 2000 clears no value
+schema = 1
+id = "m"
+kind = "project"
+
+[verbs.j_edit.n]
+type = "integer"
+min = 1

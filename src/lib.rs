@@ -11,8 +11,8 @@
 //!   keys, floats and limits refused) and validates every rule.
 //! - [`Manifest::canonical_json`] is RFC 8785 JSON with defaults filled in;
 //!   [`Manifest::digest`] is SHA-256 over it, domain-separated.
-//! - [`Manifest::constraints`] lists the enum and pattern constraints that
-//!   clear taint, for the policy engine.
+//! - [`Manifest::constraints`] lists the constraints that clear taint, for
+//!   the policy engine.
 //! - [`Command::resolve`] fills an argv template from tainted values.
 //! - [`pattern`] is the pattern-safety code shared with damavand-policy.
 #![forbid(unsafe_code)]

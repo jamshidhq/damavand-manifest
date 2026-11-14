@@ -9,7 +9,7 @@ where v0.1 differs from sections 0-7.
 - One manifest per module, reviewed like code. Agents cannot widen it.
 - jamshid keeps it in the core store, outside the worktree. Workers call `j_run {name, filter}`.
 - The tool list is fixed per loop.
-- Policy rules carry over unchanged: the action-id grammar `^[a-z][a-z0-9_.]*$`; one non-empty enum or one pattern per key; `compile_pattern` limits and forbidden set; an empty tainted value never clears; requests never carry constraints.
+- Policy rules carry over unchanged: the action-id grammar `^[a-z][a-z0-9_.]*$`; one constraint per key (a non-empty enum or a pattern for a string; for an integer or a boolean an `allowed` list or, for an integer, a two-sided bound; see section 10); `compile_pattern` limits and forbidden set; an empty tainted value never clears; requests never carry constraints.
 - Error block 2000-2999. MSRV 1.89.
 - **Decided by necessity:** the policy bundle id covers every manifest digest. Otherwise a manifest swap changes what clears taint while live grants still verify.
 
@@ -34,7 +34,7 @@ in section 8.
 
 **Tool:** `id` (grammar), `upstream` (the real MCP name, any printable ASCII, max 128 bytes), `class` (ActionClass; omitted means `write.remote`), `params`.
 
-**Param:** `type` (`string`, `integer`, `boolean`), `required`, shape limits (`max_len`, `min`, `max`), and an optional `constraint` (`enum` or `pattern`). Shape rejects bad values before policy. Only `constraint` clears taint, so free text stays tainted. (v0.1: integer and boolean command arguments also clear inside a declared bound; see section 9, review round 4.) The crate generates MCP JSON Schema (`additionalProperties: false`); authors never write it.
+**Param:** `type` (`string`, `integer`, `boolean`), `required`, shape limits (`max_len`, `min`, `max`), and an optional `constraint` (`enum` or `pattern`). Shape rejects bad values before policy. Only a constraint clears taint, so free text stays tainted: a string's `constraint`, or for an integer or a boolean a declared bound or `allowed` list (section 10). The same holds for command arguments, tool parameters and verb parameters. The crate generates MCP JSON Schema (`additionalProperties: false`); authors never write it.
 
 **Class rules:** the manifest sets a class only for `mcp_call` tools, never for a schema verb. The loader refuses `class = never` and tool ids that collide with a schema verb or `NEVER_ACTIONS`.
 
@@ -295,8 +295,8 @@ with them (round 4).
   rejection corpus gives the same result on every file before and after).
   The `-p`/`-r` over-refusal was in `is_code_flag` only, so it is gone.
 - **Integer and boolean arguments clear taint inside a declared bound.**
-  Command arguments only; tool parameters and verbs keep the rule that
-  only a string constraint clears.
+  Round 4 scoped this to command arguments; section 10 extends the same
+  rules to tool parameters and verb parameters.
   - Integer: cleared when its `allowed` list holds the value, or, without
     a list, when both `min` and `max` are narrower than ±(2^53 - 1). A
     bound at that limit is no bound, whether written or not: the
@@ -315,3 +315,49 @@ with them (round 4).
     outside `allowed` is kept and stays tainted, like a string outside its
     enum. `Manifest::constraints` lists the new constraints, so policy
     and `ResolvedArgv::uncleared` agree.
+
+## 10. Integer and boolean taint scope (owner rulings 2026-11-14)
+
+- **One rule everywhere.** Command arguments, tool parameters and verb
+  parameters clear integer and boolean values the same way. An integer
+  clears when its `allowed` list holds the value, or, without a list,
+  when both `min` and `max` are narrower than ±(2^53 - 1). A boolean
+  clears only through `allowed`. A one-sided bound never clears. The
+  field keeps the name `allowed`.
+- **Any finite declared bound narrower than ±(2^53 - 1) clears;
+  narrowness is the author's call.** The crate does not judge whether
+  `1..=1000000` is narrow enough. The reviewer of the manifest does.
+- **Negative bounds and `allow_option`.** An integer command argument
+  with `allow_option = true` and a negative `min` can clear values such
+  as `-5`, which read as flags in argv. That is the author's opt-in:
+  without `allow_option`, `resolve` refuses any value starting with `-`.
+  The `-`/`@`/`+` and path-escape rules stay command-only; tool and verb
+  values never reach an argv.
+- **Tool parameters.** `allowed` is accepted, and a two-sided bound
+  derives `Constraint::IntegerRange`. The MCP input schema keeps
+  `minimum` and `maximum` and gets no `enum` for `allowed`: a value
+  outside the list is kept and stays tainted, it is not a shape error.
+  The `gh.issue_read.number` parameter of the `full.toml` fixture
+  (`1..=1000000`) now clears; its digest is unchanged, because the range
+  is derived and not written.
+- **Verb parameters.** A verb parameter takes `type` (`string` when
+  omitted), `constraint` (strings only), `min`, `max` and `allowed`.
+  Nothing else: `required`, `max_len`, `allow_option` and
+  `allow_path_escape` stay unknown fields. A verb entry exists only to
+  clear taint, so an integer or boolean verb parameter that clears no
+  value (one-sided bound, no bound, boolean without `allowed`) is refused
+  at load, instead of being kept as an entry that does nothing.
+- **Canonical form.** A string verb parameter is still written as
+  `{"constraint": ...}` only, so the digest of every manifest that does
+  not use the new forms is unchanged (pinned for the fixtures in
+  `tests/taint_scope.rs`). An integer verb parameter writes `type`,
+  `min` and `max` (defaults filled) and `allowed` when present; a boolean
+  writes `type` and `allowed`. `allowed` is sorted. A string verb
+  parameter with an explicit `"type": "string"` is not canonical.
+- **No panic path.** Writing a constraint to JSON is one exhaustive
+  match over every `Constraint` variant; the old `unreachable!` for verb
+  constraints is gone.
+- **For consumers.** damavand-policy must decide clearing by calling
+  `Constraint::clears`, not by matching variants itself. `Constraint` and
+  `ConstraintKey` are `#[non_exhaustive]`: a variant policy does not know
+  must fail closed (value stays tainted).

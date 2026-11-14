@@ -1,0 +1,7 @@
+# expect: 2000 clears no value
+schema = 1
+id = "m"
+kind = "project"
+
+[verbs.j_edit.b]
+type = "boolean"

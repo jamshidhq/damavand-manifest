@@ -1,0 +1,9 @@
+# expect: 2000 unknown field
+schema = 1
+id = "m"
+kind = "project"
+
+[verbs.j_edit.n]
+type = "integer"
+allowed = [1]
+allow_option = true
