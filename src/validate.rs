@@ -85,7 +85,12 @@ struct RawTool {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawVerbParam {
-    constraint: RawConstraint,
+    #[serde(rename = "type")]
+    ty: Option<ParamType>,
+    constraint: Option<RawConstraint>,
+    min: Option<i64>,
+    max: Option<i64>,
+    allowed: Option<Vec<Value>>,
 }
 
 #[derive(Deserialize)]
@@ -592,7 +597,7 @@ fn tools(raw: Vec<RawTool>) -> Result<Vec<Tool>> {
                 t.upstream, other.id
             ));
         }
-        let params = params(&format!("{path}.params"), t.params, false)?;
+        let params = params(&format!("{path}.params"), t.params, Scope::Tool)?;
         out.push(Tool {
             id: t.id,
             upstream: t.upstream,
@@ -607,7 +612,7 @@ fn tools(raw: Vec<RawTool>) -> Result<Vec<Tool>> {
 fn verbs(
     kind: Kind,
     raw: BTreeMap<String, BTreeMap<String, RawVerbParam>>,
-) -> Result<BTreeMap<String, BTreeMap<String, Constraint>>> {
+) -> Result<BTreeMap<String, BTreeMap<String, Param>>> {
     if !raw.is_empty() && kind != Kind::Project {
         return invalid("verbs: only a project manifest can constrain verbs");
     }
@@ -642,10 +647,7 @@ fn verbs(
             if !is_id(&name) {
                 return invalid(format!("{ppath}: name is not [a-z][a-z0-9_.]*"));
             }
-            cs.insert(
-                name,
-                constraint(&format!("{ppath}.constraint"), p.constraint)?,
-            );
+            cs.insert(name, verb_param(&ppath, p)?);
         }
         out.insert(verb, cs);
     }
@@ -683,10 +685,51 @@ fn constraint(path: &str, raw: RawConstraint) -> Result<Constraint> {
     }
 }
 
+/// A verb parameter: a string with an enum or pattern constraint, or an
+/// integer or boolean that clears by the same rules as a command argument
+/// or tool parameter. A verb entry exists only to clear taint, so one that
+/// clears no value is refused.
+fn verb_param(path: &str, p: RawVerbParam) -> Result<Param> {
+    let ty = p.ty.unwrap_or(ParamType::String);
+    let raw = RawParam {
+        ty,
+        required: None,
+        max_len: None,
+        min: p.min,
+        max: p.max,
+        constraint: p.constraint,
+        allow_option: None,
+        allow_path_escape: None,
+        allowed: p.allowed,
+    };
+    let out = param(path, raw, Scope::Verb)?;
+    if out.constraint.is_none() {
+        return invalid(match ty {
+            ParamType::String => format!("{path}: missing field `constraint`"),
+            ParamType::Integer => format!(
+                "{path}: clears no value: an integer needs `allowed`, or both `min` and `max` narrower than ±(2^53 - 1)"
+            ),
+            ParamType::Boolean => format!("{path}: clears no value: a boolean needs `allowed`"),
+        });
+    }
+    Ok(out)
+}
+
+/// Where a parameter is declared.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Scope {
+    /// A named command's argument.
+    Command,
+    /// A manifest tool's parameter.
+    Tool,
+    /// A schema verb's parameter.
+    Verb,
+}
+
 fn params(
     path: &str,
     raw: BTreeMap<String, RawParam>,
-    command_arg: bool,
+    scope: Scope,
 ) -> Result<BTreeMap<String, Param>> {
     if raw.len() > limits::MAX_PARAMS {
         return invalid(format!(
@@ -700,12 +743,13 @@ fn params(
         if !is_id(&name) {
             return invalid(format!("{ppath}: name is not [a-z][a-z0-9_.]*"));
         }
-        out.insert(name, param(&ppath, p, command_arg)?);
+        out.insert(name, param(&ppath, p, scope)?);
     }
     Ok(out)
 }
 
-fn param(path: &str, p: RawParam, command_arg: bool) -> Result<Param> {
+fn param(path: &str, p: RawParam, scope: Scope) -> Result<Param> {
+    let command_arg = scope == Scope::Command;
     let not_for = |field: &str, ty: ParamType| {
         invalid::<Param>(format!(
             "{path}.{field}: not allowed for type {}",
@@ -719,9 +763,6 @@ fn param(path: &str, p: RawParam, command_arg: bool) -> Result<Param> {
     };
     let allow_option = command_only("allow_option", p.allow_option)?;
     let allow_path_escape = command_only("allow_path_escape", p.allow_path_escape)?;
-    if !command_arg && p.allowed.is_some() {
-        return invalid(format!("{path}.allowed: only for command arguments"));
-    }
     let mut out = Param {
         ty: p.ty,
         required: p.required.unwrap_or(false),
@@ -750,7 +791,10 @@ fn param(path: &str, p: RawParam, command_arg: bool) -> Result<Param> {
                     limits::MAX_STRING_BYTES
                 ));
             }
-            out.max_len = Some(max_len as u32);
+            // A verb parameter has no shape: its value is checked by policy.
+            if scope != Scope::Verb {
+                out.max_len = Some(max_len as u32);
+            }
             out.constraint = match p.constraint {
                 Some(c) => Some(constraint(&format!("{path}.constraint"), c)?),
                 None => None,
@@ -781,7 +825,7 @@ fn param(path: &str, p: RawParam, command_arg: bool) -> Result<Param> {
                 }
                 // A bound at the ±(2^53 - 1) default is no bound, whether
                 // written or not: the canonical form cannot tell them apart.
-                None if command_arg && min > -MAX_SAFE_INTEGER && max < MAX_SAFE_INTEGER => {
+                None if min > -MAX_SAFE_INTEGER && max < MAX_SAFE_INTEGER => {
                     Some(Constraint::IntegerRange { min, max })
                 }
                 None => None,
@@ -846,7 +890,7 @@ fn command(name: &str, c: RawCommand) -> Result<Command> {
     if !is_id(name) {
         return invalid(format!("{path}: name is not [a-z][a-z0-9_.]*"));
     }
-    let args = params(&format!("{path}.args"), c.args, true)?;
+    let args = params(&format!("{path}.args"), c.args, Scope::Command)?;
     if c.argv.is_empty() {
         return invalid(format!("{path}.argv: empty"));
     }

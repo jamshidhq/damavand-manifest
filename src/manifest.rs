@@ -206,20 +206,21 @@ pub enum Constraint {
     Enum(Vec<String>),
     /// The whole value matches this pattern.
     Pattern(Pattern),
-    /// An integer command argument whose `min` and `max` are both narrower
-    /// than ±(2^53 - 1): a decimal integer in `min..=max`. Derived from
-    /// `min` and `max`, never written in a manifest.
+    /// An integer parameter (command argument, tool parameter or verb
+    /// parameter) without an `allowed` list whose `min` and `max` are both
+    /// narrower than ±(2^53 - 1): a decimal integer in `min..=max`.
+    /// Derived from `min` and `max`, never written in a manifest.
     IntegerRange {
         /// Smallest value.
         min: i64,
         /// Largest value.
         max: i64,
     },
-    /// An integer command argument's `allowed` list (sorted, no
-    /// duplicates): one of these decimal integers.
+    /// An integer parameter's `allowed` list (sorted, no duplicates): one
+    /// of these decimal integers.
     Integers(Vec<i64>),
-    /// A boolean command argument's `allowed` list (sorted, no
-    /// duplicates): `true` or `false`, when listed.
+    /// A boolean parameter's `allowed` list (sorted, no duplicates):
+    /// `true` or `false`, when listed.
     Booleans(Vec<bool>),
 }
 
@@ -270,7 +271,9 @@ impl ParamType {
 }
 
 /// A tool parameter or command argument. Shape limits reject bad values
-/// before policy; only the constraint clears taint.
+/// before policy; only the constraint clears taint: a string's
+/// `constraint`, or for an integer or a boolean a declared bound or
+/// `allowed` list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Param {
     pub(crate) ty: ParamType,
@@ -281,9 +284,9 @@ pub struct Param {
     pub(crate) min: Option<i64>,
     /// Integer only.
     pub(crate) max: Option<i64>,
-    /// Strings: the authored `constraint`. Integer and boolean command
-    /// arguments: the `allowed` list, or for integers the range when `min`
-    /// and `max` are both declared.
+    /// Strings: the authored `constraint`. Integers and booleans: the
+    /// `allowed` list, or for integers the range when `min` and `max` are
+    /// both declared narrower than ±(2^53 - 1).
     pub(crate) constraint: Option<Constraint>,
     /// Command arguments only.
     pub(crate) allow_option: Option<bool>,
@@ -378,8 +381,15 @@ impl Tool {
                 Some(Constraint::Pattern(pat)) => {
                     prop.insert("pattern".into(), format!("^(?:{})$", pat.source).into());
                 }
-                // The others are for command arguments only.
-                _ => {}
+                // A range is already `minimum` and `maximum`. An `allowed`
+                // list clears taint and is not a shape: a value outside it
+                // is kept and stays tainted, so it is not a JSON Schema enum.
+                Some(
+                    Constraint::IntegerRange { .. }
+                    | Constraint::Integers(_)
+                    | Constraint::Booleans(_),
+                )
+                | None => {}
             }
             props.insert(name.clone(), Value::Object(prop));
         }
@@ -438,7 +448,10 @@ pub struct Manifest {
     pub(crate) egress: Vec<Egress>,
     pub(crate) secrets: Vec<Secret>,
     pub(crate) tools: Vec<Tool>,
-    pub(crate) verbs: BTreeMap<String, BTreeMap<String, Constraint>>,
+    /// Every verb parameter carries a constraint; strings have no
+    /// `max_len` and no parameter has `required` or the command-only
+    /// fields.
+    pub(crate) verbs: BTreeMap<String, BTreeMap<String, Param>>,
     pub(crate) commands: BTreeMap<String, Command>,
 }
 
@@ -536,7 +549,7 @@ impl Manifest {
             .map(|(verb, params)| {
                 let params: Map<String, Value> = params
                     .iter()
-                    .map(|(n, c)| (n.clone(), json!({ "constraint": constraint_json(c) })))
+                    .map(|(n, p)| (n.clone(), verb_param_json(p)))
                     .collect();
                 (verb.clone(), Value::Object(params))
             })
@@ -652,14 +665,16 @@ impl Manifest {
     /// Every constraint that clears taint, keyed by what it applies to.
     pub fn constraints(&self) -> impl Iterator<Item = (ConstraintKey<'_>, &Constraint)> {
         let verbs = self.verbs.iter().flat_map(|(verb, params)| {
-            params.iter().map(move |(param, c)| {
-                (
-                    ConstraintKey::Verb {
-                        verb: verb.as_str(),
-                        param: param.as_str(),
-                    },
-                    c,
-                )
+            params.iter().filter_map(move |(param, p)| {
+                p.constraint.as_ref().map(|c| {
+                    (
+                        ConstraintKey::Verb {
+                            verb: verb.as_str(),
+                            param: param.as_str(),
+                        },
+                        c,
+                    )
+                })
             })
         });
         let tools = self.tools.iter().flat_map(|t| {
@@ -731,13 +746,45 @@ fn parse_table(text: &str) -> Result<toml::Table, ManifestError> {
         .map_err(|e: toml::de::Error| ManifestError::invalid(format!("TOML: {}", e.message())))
 }
 
-/// A verb constraint: always an enum or a pattern.
-fn constraint_json(c: &Constraint) -> Value {
+/// Write a constraint into a parameter's JSON object: `constraint` for an
+/// enum or a pattern, `allowed` for a list. A range is derived from `min`
+/// and `max`, which the caller writes, so it adds nothing.
+fn insert_constraint(m: &mut Map<String, Value>, c: &Constraint) {
     match c {
-        Constraint::Enum(values) => json!({ "enum": values }),
-        Constraint::Pattern(p) => json!({ "pattern": p.source }),
-        _ => unreachable!("a verb constraint is an enum or a pattern"),
+        Constraint::Enum(values) => {
+            m.insert("constraint".into(), json!({ "enum": values }));
+        }
+        Constraint::Pattern(p) => {
+            m.insert("constraint".into(), json!({ "pattern": p.source }));
+        }
+        Constraint::Integers(values) => {
+            m.insert("allowed".into(), values.clone().into());
+        }
+        Constraint::Booleans(values) => {
+            m.insert("allowed".into(), values.clone().into());
+        }
+        Constraint::IntegerRange { .. } => {}
     }
+}
+
+/// A verb parameter. A string writes only its constraint, as before
+/// integer and boolean verb parameters existed, so those digests stay the
+/// same; integers and booleans write `type`, `min` and `max` too.
+fn verb_param_json(p: &Param) -> Value {
+    let mut m = Map::new();
+    if p.ty != ParamType::String {
+        m.insert("type".into(), p.ty.name().into());
+    }
+    if let Some(n) = p.min {
+        m.insert("min".into(), n.into());
+    }
+    if let Some(n) = p.max {
+        m.insert("max".into(), n.into());
+    }
+    if let Some(c) = &p.constraint {
+        insert_constraint(&mut m, c);
+    }
+    Value::Object(m)
 }
 
 fn param_json(p: &Param) -> Value {
@@ -753,18 +800,8 @@ fn param_json(p: &Param) -> Value {
     if let Some(n) = p.max {
         m.insert("max".into(), n.into());
     }
-    match &p.constraint {
-        Some(c @ (Constraint::Enum(_) | Constraint::Pattern(_))) => {
-            m.insert("constraint".into(), constraint_json(c));
-        }
-        Some(Constraint::Integers(values)) => {
-            m.insert("allowed".into(), values.clone().into());
-        }
-        Some(Constraint::Booleans(values)) => {
-            m.insert("allowed".into(), values.clone().into());
-        }
-        // Derived from `min` and `max`, which are written.
-        Some(Constraint::IntegerRange { .. }) | None => {}
+    if let Some(c) = &p.constraint {
+        insert_constraint(&mut m, c);
     }
     if let Some(d) = p.allow_option {
         m.insert("allow_option".into(), d.into());

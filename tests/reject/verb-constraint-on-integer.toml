@@ -1,0 +1,10 @@
+# expect: 2000 verbs.j_edit.n.constraint: not allowed for type integer
+schema = 1
+id = "m"
+kind = "project"
+
+[verbs.j_edit.n]
+type = "integer"
+min = 1
+max = 2
+constraint = { enum = ["1"] }

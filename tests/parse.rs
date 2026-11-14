@@ -149,6 +149,11 @@ fn constraints_are_keyed_by_what_they_clear() {
                 verb: "j_edit",
                 param: "path"
             },
+            // An integer parameter with a declared min and max.
+            ConstraintKey::Tool {
+                tool: "gh.issue_read",
+                param: "number"
+            },
             ConstraintKey::Tool {
                 tool: "gh.issue_read",
                 param: "repo"
@@ -770,7 +775,7 @@ fn lints_name_wrappers_and_read_tools() {
 }
 
 #[test]
-fn allowed_lists_are_command_only_typed_and_bounded() {
+fn allowed_lists_are_typed_and_bounded() {
     let cmd = |arg: &str| {
         with(&format!(
             "[commands.c]\nargv = [\"x\", \"--\", \"{{a}}\"]\ntimeout_secs = 1\nargs.a = {arg}\n"
@@ -819,25 +824,33 @@ fn allowed_lists_are_command_only_typed_and_bounded() {
         many.join(", ")
     )));
     assert!(e.contains("commands.c.args.a.allowed: more than"), "{e}");
-    // Tool parameters keep v0.1 taint rules: no allowed list.
-    let e = refuse(&with(
+    // Tool parameters take the same list.
+    let m = parse(&with(
         "[[tools]]\nid = \"t\"\nupstream = \"t\"\nclass = \"read\"\nparams.p = { type = \"boolean\", allowed = [true] }\n",
     ));
-    assert!(
-        e.contains("tools[0].params.p.allowed: only for command arguments"),
-        "{e}"
+    assert_eq!(
+        m.constraints().next().map(|(_, c)| c.clone()),
+        Some(Constraint::Booleans(vec![true]))
     );
 }
 
 #[test]
-fn tool_integer_params_with_bounds_still_carry_no_constraint() {
-    // Taint clearing by range is for command arguments only.
+fn tool_integer_params_with_bounds_clear_like_command_args() {
     let m = full();
-    assert!(!m.constraints().any(|(k, _)| matches!(
-        k,
-        ConstraintKey::Tool {
-            param: "number",
-            ..
-        }
-    )));
+    let number = m.constraints().find(|(k, _)| {
+        matches!(
+            k,
+            ConstraintKey::Tool {
+                param: "number",
+                ..
+            }
+        )
+    });
+    assert_eq!(
+        number.map(|(_, c)| c.clone()),
+        Some(Constraint::IntegerRange {
+            min: 1,
+            max: 1_000_000
+        })
+    );
 }
